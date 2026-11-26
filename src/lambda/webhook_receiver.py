@@ -2,13 +2,16 @@
 Jira Webhook Receiver Lambda Handler
 Enables bi-directional Incident Management between Jira Cloud and AWS DevOps Agent.
 
-When an engineer opens an incident ticket in Jira or comments '/investigate':
-1. Receives Jira Cloud webhook event.
-2. Creates an authentic INVESTIGATION backlog task in AWS DevOps Agent Space.
-3. Stores the taskId <-> jiraIssueKey mapping in DynamoDB.
-4. Leaves an immediate acknowledgment comment on the Jira ticket with the Task ID and AWS Console link.
-5. As AWS DevOps Agent executes, its lifecycle events (In Progress, Completed with RCA)
-   are automatically posted back to this Jira ticket by event_handler.py!
+Handles:
+1. Issue Created: Trigger investigation if labeled 'aws-devops-agent', or type 'Incident'/'Alert', or critical priority.
+2. Issue Updated:
+   - Routine field updates (assignee, description, status): Safely ignored or status synced to DynamoDB to prevent duplicate investigations.
+   - Closed / Resolved: Marks investigation record in DynamoDB as RESOLVED.
+   - Slash Command: If an engineer comments '/investigate', dispatches a fresh autonomous investigation.
+3. Bidirectional Loop:
+   - Registers taskId <-> jiraIssueKey in DynamoDB.
+   - Posts immediate acknowledgment with console tracking link.
+   - Event Handler Lambda updates the ticket with live progress and Root Cause Analysis (RCA).
 """
 
 import os
@@ -137,14 +140,40 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     issue_key = issue.get("key", "")
     fields = issue.get("fields", {})
     summary = fields.get("summary", "")
+    status_obj = fields.get("status", {})
+    current_status_name = status_obj.get("name", "").lower()
 
-    logger.info(f"Jira Webhook Event: {webhook_event} for Issue: {issue_key}")
+    logger.info(f"Jira Webhook Event: {webhook_event} for Issue: {issue_key} (Status: {current_status_name})")
 
-    # Check trigger conditions:
-    # 1. Any comment created containing '/investigate' or '/aidevops'
-    # 2. Issue created with type 'Incident', 'Alert', or 'Problem'
-    # 3. Issue created with priority 'Highest', 'Critical', 'P1', or 'Blocker'
-    # 4. Issue created with label 'aws-devops-agent', 'trigger-investigation', 'alert', or 'incident'
+    table = get_state_table()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # --------------------------------------------------------------------------
+    # 1. Handle Issue Resolution / Closure
+    # --------------------------------------------------------------------------
+    if current_status_name in ["done", "resolved", "closed", "cancelled", "completed"]:
+        logger.info(f"Issue {issue_key} status is '{current_status_name}'. Updating state in DynamoDB.")
+        try:
+            table.update_item(
+                Key={"taskId": f"JIRA#{issue_key}"},
+                UpdateExpression="SET #s = :s, updatedAt = :u",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":s": "RESOLVED", ":u": now_iso}
+            )
+        except Exception as e:
+            logger.debug(f"Reverse lookup record JIRA#{issue_key} not found or update error: {e}")
+
+        # If it was just a status update to Done, no new investigation needed
+        if webhook_event == "jira:issue_updated" and not payload.get("comment"):
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"status": "resolved_tracked", "issue": issue_key})
+            }
+
+    # --------------------------------------------------------------------------
+    # 2. Check Trigger Conditions
+    # --------------------------------------------------------------------------
     comment = payload.get("comment", {})
     comment_body = comment.get("body", "")
     is_command = False
@@ -164,23 +193,50 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     is_alert_type = issue_type_name in ["incident", "alert", "problem"]
     is_critical_priority = priority_name in ["highest", "critical", "p1", "blocker"]
 
+    # --------------------------------------------------------------------------
+    # 3. Idempotency Check on Issue Updates
+    # --------------------------------------------------------------------------
+    # If the issue is simply updated (e.g. assignee changed, summary edited, or comment added)
+    # and the user did NOT explicitly run /investigate:
+    if webhook_event == "jira:issue_updated" and not is_command:
+        try:
+            existing = table.get_item(Key={"taskId": f"JIRA#{issue_key}"}).get("Item")
+            if existing and existing.get("status") in ["IN_PROGRESS", "INVESTIGATION_QUEUED"]:
+                active_task = existing.get("activeTaskId", "unknown")
+                logger.info(f"Issue {issue_key} is already being investigated under task {active_task}. Ignoring routine update.")
+                return {
+                    "statusCode": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json.dumps({
+                        "status": "already_active",
+                        "issue": issue_key,
+                        "activeTaskId": active_task,
+                        "message": "Investigation already in progress. Update ignored to prevent duplicate tasks."
+                    })
+                }
+        except Exception as e:
+            logger.warning(f"Error checking active investigation for {issue_key}: {e}")
+
+    # Determine if investigation should be launched
     is_trigger_event = (
         is_command
         or (webhook_event == "jira:issue_created" and (has_trigger_label or is_alert_type or is_critical_priority))
-        or (webhook_event in ["jira:issue_created", "jira:issue_updated"] and has_trigger_label)
+        or (webhook_event == "jira:issue_updated" and has_trigger_label)
     )
 
     if not is_trigger_event:
-        logger.info(f"Issue {issue_key} does not meet trigger criteria. Ignoring.")
+        logger.info(f"Issue {issue_key} update does not require a new investigation. Ignoring.")
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"status": "ignored", "message": "No action required for this event."})
+            "body": json.dumps({"status": "ignored", "message": "No investigation triggered for this update."})
         }
 
-    logger.info(f"Trigger condition matched for issue {issue_key}. Creating DevOps Agent task.")
+    logger.info(f"Trigger condition matched for issue {issue_key}. Launching AWS DevOps Agent investigation.")
 
-    # Map priority to AWS DevOps Agent priority values: CRITICAL, HIGH, MEDIUM, LOW, MINIMAL
+    # --------------------------------------------------------------------------
+    # 4. Dispatch Backlog Task to AWS DevOps Agent
+    # --------------------------------------------------------------------------
     devops_priority = "HIGH"
     if priority_name in ["highest", "critical", "p1", "blocker"]:
         devops_priority = "CRITICAL"
@@ -222,10 +278,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not task_id:
         task_id = f"tsk-jira-{issue_key}-{int(datetime.now(timezone.utc).timestamp())}"
 
-    # Save mapping to DynamoDB so event_handler knows which Jira issue to update with RCA
+    # --------------------------------------------------------------------------
+    # 5. Persist State to DynamoDB
+    # --------------------------------------------------------------------------
     try:
-        table = get_state_table()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        # Primary lookup: taskId -> Jira issue
         table.put_item(
             Item={
                 "taskId": task_id,
@@ -237,11 +294,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "updatedAt": now_iso
             }
         )
-        logger.info(f"Saved mapping to DynamoDB: {task_id} -> {issue_key}")
+        # Reverse lookup: JIRA#issue_key -> taskId (prevents duplicate tasks on routine updates)
+        table.put_item(
+            Item={
+                "taskId": f"JIRA#{issue_key}",
+                "activeTaskId": task_id,
+                "agentSpaceId": AGENT_SPACE_ID,
+                "status": "IN_PROGRESS",
+                "createdAt": now_iso,
+                "updatedAt": now_iso
+            }
+        )
+        logger.info(f"Saved mappings to DynamoDB: {task_id} <-> {issue_key}")
     except Exception as e:
         logger.error(f"Failed to save mapping to DynamoDB: {e}")
 
-    # Emit trigger event to EventBridge
+    # --------------------------------------------------------------------------
+    # 6. Publish Event to EventBridge
+    # --------------------------------------------------------------------------
     try:
         entry = {
             "Source": "jira.incident_management",
@@ -260,7 +330,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Failed to put event into EventBridge: {e}")
 
-    # Post acknowledgment comment back to Jira
+    # --------------------------------------------------------------------------
+    # 7. Post Acknowledgment Comment on Jira Ticket
+    # --------------------------------------------------------------------------
     jira = get_jira_client()
     if jira:
         try:
