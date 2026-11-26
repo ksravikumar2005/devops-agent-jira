@@ -254,10 +254,126 @@ def handle_investigation_in_progress(event: Dict[str, Any], jira: JiraClient):
     update_mapping_status(task_id, "IN_PROGRESS")
 
 
+def fetch_investigation_details(
+    agent_space_id: str,
+    task_id: str,
+    execution_id: Optional[str] = None,
+    region: str = "us-east-1"
+) -> Dict[str, Any]:
+    """
+    Directly query AWS DevOps Agent API to extract the full Root Cause Analysis (RCA),
+    recommendations, diagnostic findings, and journal records.
+    """
+    results: Dict[str, Any] = {
+        "root_cause": None,
+        "recommendations": [],
+        "affected_resources": [],
+        "findings": [],
+        "execution_id": execution_id
+    }
+
+    client = None
+    for c_name in ["devops-agent", "aidevops"]:
+        try:
+            client = boto3.client(c_name, region_name=region)
+            break
+        except Exception:
+            continue
+
+    if not client:
+        logger.warning("Could not instantiate devops-agent boto3 client for details extraction.")
+        return results
+
+    # 1. Fetch Task Details
+    try:
+        task_resp = client.get_backlog_task(agentSpaceId=agent_space_id, taskId=task_id)
+        task = task_resp.get("task", {})
+        if not results["execution_id"]:
+            results["execution_id"] = task.get("executionId")
+
+        status_reason = task.get("statusReason")
+        if status_reason and not results["root_cause"]:
+            results["root_cause"] = status_reason
+
+        # Inspect supportMetadata / metadata
+        meta = task.get("metadata") or {}
+        if isinstance(meta, dict):
+            for k in ["rootCause", "root_cause", "findings", "summary", "conclusion"]:
+                if meta.get(k):
+                    results["root_cause"] = meta.get(k)
+                    break
+            if meta.get("recommendations") and isinstance(meta.get("recommendations"), list):
+                results["recommendations"].extend(meta.get("recommendations"))
+            if meta.get("affectedResources") and isinstance(meta.get("affectedResources"), list):
+                results["affected_resources"].extend(meta.get("affectedResources"))
+    except Exception as e:
+        logger.warning(f"Error calling get_backlog_task for {task_id}: {e}")
+
+    # 2. Fetch Recommendations
+    try:
+        recs_resp = client.list_recommendations(agentSpaceId=agent_space_id, taskId=task_id)
+        for rec in recs_resp.get("recommendations", []):
+            rec_title = rec.get("title", "")
+            rec_priority = rec.get("priority", "HIGH")
+            rec_content = rec.get("content", {})
+            summary = rec_content.get("summary", "")
+            spec = rec_content.get("spec", "")
+
+            rec_text = f"[{rec_priority}] {rec_title}"
+            if summary and summary != rec_title:
+                rec_text += f" - {summary}"
+            if spec:
+                rec_text += f"\nRemediation Steps: {spec}"
+            results["recommendations"].append(rec_text)
+    except Exception as e:
+        logger.warning(f"Error calling list_recommendations for {task_id}: {e}")
+
+    # 3. Fetch Journal Records for In-depth Findings
+    active_exec_id = results["execution_id"]
+    if active_exec_id:
+        try:
+            j_resp = client.list_journal_records(
+                agentSpaceId=agent_space_id,
+                executionId=active_exec_id,
+                order="DESC",
+                maxItems=25
+            )
+            for r in j_resp.get("records", []):
+                content = r.get("content")
+                rtype = str(r.get("recordType", "")).upper()
+                text = ""
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, dict):
+                    text = (
+                        content.get("summary")
+                        or content.get("text")
+                        or content.get("analysis")
+                        or content.get("findings")
+                        or content.get("message")
+                        or json.dumps(content)
+                    )
+
+                if text:
+                    # Look for conclusion or RCA markers
+                    if any(k in rtype for k in ["CONCLUSION", "SUMMARY", "HYPOTHESIS", "ANALYSIS", "RCA", "RESULT"]):
+                        if not results["root_cause"] or len(text) > len(str(results["root_cause"])):
+                            results["root_cause"] = text
+                    # Collect findings
+                    if len(text) > 20 and not any(text in f for f in results["findings"]):
+                        results["findings"].append(f"• [{rtype}] {text[:600]}")
+        except Exception as e:
+            logger.warning(f"Error calling list_journal_records for execution {active_exec_id}: {e}")
+
+    return results
+
+
 def handle_investigation_completed(event: Dict[str, Any], jira: JiraClient):
     """
     Handle 'Investigation Completed' event:
-    Synthesize Root Cause Analysis (RCA) and append comprehensive comment.
+    1. Parse investigation identifiers and query DevOps Agent API for full RCA.
+    2. Format rich Root Cause Analysis, findings, recommendations, and affected resources.
+    3. Post comment to Jira, apply 'rca-completed' label, and update DynamoDB state.
     """
     detail = event.get("detail", {})
     metadata = detail.get("metadata", {})
@@ -282,18 +398,32 @@ def handle_investigation_completed(event: Dict[str, Any], jira: JiraClient):
         logger.warning(f"No Jira issue mapped for completed task {task_id}.")
         return
 
-    # Idempotency Guard: Avoid duplicate RCA comments if EventBridge re-delivers Completed event
-    if task_item.get("status") == "COMPLETED":
-        logger.info(f"Idempotency Guard: Task '{task_id}' has already been processed as COMPLETED on '{issue_key}'. Skipping duplicate comment.")
-        return
-
-    # Attempt to extract findings from event payload or default synthesis
-    root_cause = data.get("root_cause") or data.get("findings") or data.get("summary")
+    # Extract findings from event payload
+    root_cause = data.get("root_cause") or data.get("findings") or data.get("summary") or data.get("conclusion")
     recommendations = data.get("recommendations", [])
     affected_resources = data.get("affected_resources", [])
+    findings_list = []
+
+    # Deep Query to AWS DevOps Agent service to retrieve full RCA, Journal findings & recommendations
+    if agent_space_id and task_id:
+        logger.info(f"Querying AWS DevOps Agent API for full RCA on task {task_id} in space {agent_space_id}...")
+        api_details = fetch_investigation_details(agent_space_id, task_id, execution_id, region)
+        if api_details.get("root_cause"):
+            root_cause = api_details["root_cause"]
+        if api_details.get("recommendations"):
+            recommendations = list(dict.fromkeys(recommendations + api_details["recommendations"]))
+        if api_details.get("affected_resources"):
+            affected_resources = list(dict.fromkeys(affected_resources + api_details["affected_resources"]))
+        if api_details.get("findings"):
+            findings_list = api_details["findings"][:5]
 
     if not root_cause:
-        root_cause = "Automated investigation concluded. Root-cause hypothesis generated from correlated CloudWatch alarms and application log telemetry."
+        if recommendations:
+            root_cause = f"Autonomous analysis complete. AWS DevOps Agent identified {len(recommendations)} recommended remediation actions."
+        elif findings_list:
+            root_cause = "Autonomous diagnostic investigation completed with the findings detailed below."
+        else:
+            root_cause = "Automated investigation concluded. Root cause analysis generated from correlated CloudWatch alarms, metrics, and application log telemetry."
 
     console_link = build_console_url(agent_space_id, task_id, region)
 
@@ -306,15 +436,19 @@ def handle_investigation_completed(event: Dict[str, Any], jira: JiraClient):
     doc["content"].append(ADFBuilder.heading("Root Cause Analysis (RCA)", level=3))
     doc["content"].append(ADFBuilder.paragraph(str(root_cause), bold=False))
 
-    if affected_resources:
-        doc["content"].append(ADFBuilder.heading("Affected Resources", level=4))
-        resource_items = [str(r) for r in affected_resources]
-        doc["content"].append(ADFBuilder.bullet_list(resource_items))
-
     if recommendations:
-        doc["content"].append(ADFBuilder.heading("Recommended Remediations", level=4))
+        doc["content"].append(ADFBuilder.heading("Actionable Recommendations & Remediations", level=4))
         rec_items = [str(rec) for rec in recommendations]
         doc["content"].append(ADFBuilder.bullet_list(rec_items))
+
+    if findings_list:
+        doc["content"].append(ADFBuilder.heading("Diagnostic Evidence & Journal Highlights", level=4))
+        doc["content"].append(ADFBuilder.bullet_list(findings_list))
+
+    if affected_resources:
+        doc["content"].append(ADFBuilder.heading("Affected AWS Resources", level=4))
+        resource_items = [str(r) for r in affected_resources]
+        doc["content"].append(ADFBuilder.bullet_list(resource_items))
 
     doc["content"].append(ADFBuilder.heading("Agent Journal & Trace Artifacts", level=4))
     doc["content"].append(ADFBuilder.link_paragraph(
@@ -331,7 +465,7 @@ def handle_investigation_completed(event: Dict[str, Any], jira: JiraClient):
     jira.transition_issue(issue_key, "In Progress")
 
     update_mapping_status(task_id, "COMPLETED")
-    logger.info(f"Appended RCA comment to Jira issue {issue_key} for task {task_id}")
+    logger.info(f"Appended detailed RCA comment to Jira issue {issue_key} for task {task_id}")
 
 
 def handle_investigation_failed(event: Dict[str, Any], jira: JiraClient):
