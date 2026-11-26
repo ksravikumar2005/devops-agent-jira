@@ -73,12 +73,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             is_command = True
 
     labels = fields.get("labels", [])
-    has_trigger_label = "trigger-investigation" in labels or "aws-devops-agent" in labels
+    issue_type_name = fields.get("issuetype", {}).get("name", "").lower()
+    priority_name = fields.get("priority", {}).get("name", "").lower()
+    
+    # Trigger conditions:
+    # 1. Any comment created containing '/investigate' or '/aidevops'
+    # 2. Issue created with type 'Incident' or 'Alert'
+    # 3. Issue created with priority 'Highest', 'Critical', or 'P1'
+    # 4. Issue created with label 'aws-devops-agent', 'alert', or 'trigger-investigation'
+    has_trigger_label = any(lbl in ["trigger-investigation", "aws-devops-agent", "alert", "incident"] for lbl in labels)
+    is_alert_type = issue_type_name in ["incident", "alert", "problem"]
+    is_critical_priority = priority_name in ["highest", "critical", "p1", "blocker"]
 
-    if is_command or (webhook_event == "jira:issue_created" and has_trigger_label):
-        logger.info(f"Trigger condition matched for issue {issue_key}. Dispatching investigation trigger.")
+    is_trigger_event = (
+        is_command
+        or (webhook_event == "jira:issue_created" and (has_trigger_label or is_alert_type or is_critical_priority))
+        or (webhook_event in ["jira:issue_created", "jira:issue_updated"] and has_trigger_label)
+    )
 
-        # Emit an event to EventBridge or invoke DevOps Agent API directly
+    if is_trigger_event:
+        logger.info(f"Trigger condition matched for issue {issue_key} (type: {issue_type_name}, priority: {priority_name}). Dispatching investigation trigger.")
+
+        # Emit an event to EventBridge and invoke DevOps Agent API
         try:
             entry = {
                 "Source": "jira.incident_management",
@@ -87,11 +103,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "jira_issue_key": issue_key,
                     "summary": summary,
                     "agent_space_id": agent_space_id,
-                    "triggered_by": payload.get("user", {}).get("displayName", "Jira User")
+                    "issue_type": issue_type_name,
+                    "priority": priority_name,
+                    "description": fields.get("description", ""),
+                    "triggered_by": payload.get("user", {}).get("displayName", "Jira System/User")
                 })
             }
             events_client.put_events(Entries=[entry])
-            logger.info(f"Dispatched manual investigation event for {issue_key}")
+            logger.info(f"Dispatched investigation event to EventBridge for {issue_key}")
 
             return {
                 "statusCode": 200,
@@ -99,7 +118,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "body": json.dumps({
                     "status": "triggered",
                     "issue": issue_key,
-                    "message": "DevOps Agent investigation successfully queued."
+                    "message": "AWS DevOps Agent investigation successfully queued from Jira alert."
                 })
             }
         except Exception as e:
