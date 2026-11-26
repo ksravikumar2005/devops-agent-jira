@@ -80,6 +80,17 @@ class JiraClient:
         key = project_key or self.default_project_key
         return self._request("GET", f"/rest/api/3/project/{key}")
 
+    def get_valid_issue_types(self, project_key: str) -> List[str]:
+        """Fetch list of valid standard (non-subtask) issue types for a project."""
+        try:
+            proj = self.get_project(project_key)
+            issue_types = proj.get("issueTypes", [])
+            valid = [it.get("name") for it in issue_types if not it.get("subtask", False)]
+            return [v for v in valid if v] or ["Task"]
+        except Exception as e:
+            logger.warning(f"Could not fetch issue types for project {project_key}: {e}")
+            return ["Task", "Bug"]
+
     def create_issue(
         self,
         summary: str,
@@ -92,9 +103,25 @@ class JiraClient:
     ) -> Dict[str, Any]:
         """
         Create a new Jira issue using REST API v3 and Atlassian Document Format (ADF).
+        Includes automatic fallback for team-managed project issue types (e.g. Task/Bug)
+        and screen field resilience.
         """
         project = project_key or self.default_project_key
-        itype = issue_type or self.default_issue_type
+        requested_type = issue_type or self.default_issue_type
+
+        # Verify if requested issue type exists in this project
+        valid_types = self.get_valid_issue_types(project)
+        if requested_type in valid_types:
+            itype = requested_type
+        else:
+            # Fallback to Task or first available standard issue type
+            fallback = "Task" if "Task" in valid_types else valid_types[0]
+            logger.warning(
+                f"Issue type '{requested_type}' does not exist in project '{project}' (available: {valid_types}). "
+                f"Auto-falling back to '{fallback}'."
+            )
+            itype = fallback
+
         issue_labels = labels or ["aws-devops-agent", "automated-investigation"]
 
         fields: Dict[str, Any] = {
@@ -113,9 +140,18 @@ class JiraClient:
 
         payload = {"fields": fields}
         logger.info(f"Creating Jira issue in project {project} with type {itype}...")
-        resp = self._request("POST", "/rest/api/3/issue", payload)
-        logger.info(f"Created Jira issue: {resp.get('key')} (id: {resp.get('id')})")
-        return resp
+        try:
+            resp = self._request("POST", "/rest/api/3/issue", payload)
+            logger.info(f"Created Jira issue: {resp.get('key')} (id: {resp.get('id')})")
+            return resp
+        except JiraClientError as e:
+            # If priority field is not on the creation screen (common in team-managed projects), retry without it
+            if priority and "priority" in (e.response_body or "").lower():
+                logger.warning(f"Priority field '{priority}' rejected by Jira. Retrying issue creation without priority...")
+                fields.pop("priority", None)
+                payload = {"fields": fields}
+                return self._request("POST", "/rest/api/3/issue", payload)
+            raise
 
     def add_comment(self, issue_key: str, comment_adf: Dict[str, Any]) -> Dict[str, Any]:
         """Add a comment with Atlassian Document Format (ADF) to an existing Jira issue."""

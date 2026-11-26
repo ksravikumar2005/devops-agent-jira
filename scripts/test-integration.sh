@@ -38,13 +38,24 @@ CREATED_DETAIL=$(jq -n \
     }
   }')
 
-aws events put-events \
-  --entries "[{\"Source\": \"aws.aidevops\", \"DetailType\": \"Investigation Created\", \"Detail\": $(echo "$CREATED_DETAIL" | jq -c . | jq -R .), \"Resources\": [\"arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}\"]}]" \
-  --region "$REGION"
+ENTRY_FILE="/tmp/test-eb-$$.json"
+cat << EOF > "$ENTRY_FILE"
+[
+  {
+    "Source": "aws.aidevops",
+    "DetailType": "Investigation Created",
+    "Detail": $(echo "$CREATED_DETAIL" | jq -c . | jq -R .),
+    "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
+  }
+]
+EOF
+
+aws events put-events --entries "file://${ENTRY_FILE}" --region "$REGION" > /dev/null
+rm -f "$ENTRY_FILE"
 
 echo "Sent Investigation Created event for Task: ${TASK_ID}"
-echo "Sleeping 6 seconds for Jira issue creation..."
-sleep 6
+echo "Sleeping 10 seconds for Jira issue creation and Lambda execution..."
+sleep 10
 
 echo -e "\n[2/3] Emitting 'Investigation In Progress'..."
 PROGRESS_DETAIL=$(jq -n \

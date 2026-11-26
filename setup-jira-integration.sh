@@ -136,13 +136,26 @@ while [ "$JIRA_VALID" = false ]; do
         DISPLAY_NAME=$(echo "$HTTP_BODY" | jq -r '.displayName // .name // "User"' 2>/dev/null || echo "User")
         echo -e "  ${GREEN}✓ Successfully authenticated as Jira user: ${BOLD}${DISPLAY_NAME}${NC}"
 
-        # Verify Project exists
-        PROJ_RESP=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 -u "${JIRA_EMAIL}:${JIRA_TOKEN}" -H "Accept: application/json" "${JIRA_URL}/rest/api/3/project/${JIRA_PROJECT}")
-        if [ "$PROJ_RESP" -eq 200 ]; then
+        # Verify Project exists and auto-discover available issue types
+        PROJ_JSON=$(curl -s -L --connect-timeout 15 -u "${JIRA_EMAIL}:${JIRA_TOKEN}" -H "Accept: application/json" "${JIRA_URL}/rest/api/3/project/${JIRA_PROJECT}")
+        if echo "$PROJ_JSON" | jq -e '.key' &>/dev/null; then
             echo -e "  ${GREEN}✓ Project '${JIRA_PROJECT}' exists and is accessible.${NC}"
+            
+            # Auto-detect available standard non-subtask issue types
+            AVAILABLE_TYPES=$(echo "$PROJ_JSON" | jq -r '.issueTypes[]? | select(.subtask==false) | .name' 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+            echo -e "  Available Issue Types in ${JIRA_PROJECT}: ${CYAN}${AVAILABLE_TYPES}${NC}"
+            
+            # Check if selected issue type exists; if not, auto-fallback to Task or first valid
+            if ! echo "$AVAILABLE_TYPES" | grep -iq "\b${JIRA_ISSUE_TYPE}\b"; then
+                FIRST_VALID=$(echo "$AVAILABLE_TYPES" | awk '{print $1}')
+                DEFAULT_FALLBACK="${FIRST_VALID:-Task}"
+                echo -e "  ${YELLOW}Notice: Issue type '${JIRA_ISSUE_TYPE}' is not enabled in project ${JIRA_PROJECT}.${NC}"
+                echo -e "  ${GREEN}✓ Auto-selected '${DEFAULT_FALLBACK}' as the active issue type.${NC}"
+                JIRA_ISSUE_TYPE="$DEFAULT_FALLBACK"
+            fi
             JIRA_VALID=true
         else
-            echo -e "  ${YELLOW}[WARNING] Connected to Jira, but Project '${JIRA_PROJECT}' returned HTTP ${PROJ_RESP}.${NC}"
+            echo -e "  ${YELLOW}[WARNING] Connected to Jira, but Project '${JIRA_PROJECT}' could not be loaded.${NC}"
             read -rp "Continue with project '${JIRA_PROJECT}' anyway? [y/N]: " FORCE_PROJ
             if [[ "$FORCE_PROJ" =~ ^[Yy] ]]; then
                 JIRA_VALID=true
@@ -289,12 +302,30 @@ if [[ ! "$RUN_TEST" =~ ^[Nn] ]]; then
         }
       }')
 
-    aws events put-events \
-        --entries "[{\"Source\": \"aws.aidevops\", \"DetailType\": \"Investigation Created\", \"Detail\": $(echo "$TEST_EVENT_JSON" | jq -c '.detail' | jq -R .), \"Resources\": [\"arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}\"]}]" \
-        --region "$TARGET_REGION" > /dev/null
+    # Use JSON file for put-events to guarantee 100% shell escaping safety
+    TEST_ENTRY_FILE="/tmp/eb-entry-created-$$.json"
+    cat << EOF > "$TEST_ENTRY_FILE"
+[
+  {
+    "Source": "aws.aidevops",
+    "DetailType": "Investigation Created",
+    "Detail": $(echo "$TEST_EVENT_JSON" | jq -c '.detail' | jq -R .),
+    "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]
+  }
+]
+EOF
 
-    echo -e "  Event emitted to EventBridge. Waiting 6 seconds for Lambda execution..."
-    sleep 6
+    PUT_RESP=$(aws events put-events --entries "file://${TEST_ENTRY_FILE}" --region "$TARGET_REGION" 2>&1)
+    rm -f "$TEST_ENTRY_FILE"
+    FAILED_COUNT=$(echo "$PUT_RESP" | jq -r '.FailedEntryCount // 0' 2>/dev/null || echo "0")
+
+    if [ "$FAILED_COUNT" -gt 0 ]; then
+        echo -e "  ${RED}[ERROR] EventBridge put-events reported ${FAILED_COUNT} failure(s):${NC} ${PUT_RESP}"
+    else
+        echo -e "  ${GREEN}✓ Event dispatched to EventBridge.${NC} Waiting 10 seconds for Lambda cold start and Jira API..."
+    fi
+
+    sleep 10
 
     # Query DynamoDB for created issue
     MAPPED_ISSUE=$(aws dynamodb get-item \
@@ -322,28 +353,39 @@ if [[ ! "$RUN_TEST" =~ ^[Nn] ]]; then
             },
             data: {
               status: "COMPLETED",
-              root_cause: "Thread starvation in database connection pool caused by unindexed query scanning table 'orders'. Correlated CPU spike on rds-mysql-prod.",
+              root_cause: "Thread starvation in database connection pool caused by unindexed query scanning table orders. Correlated CPU spike on rds-mysql-prod.",
               affected_resources: [
                 "arn:aws:rds:us-east-1:123456789012:db:orders-cluster-primary",
                 "arn:aws:ecs:us-east-1:123456789012:service/checkout-api"
               ],
               recommendations: [
-                "Apply composite index (customer_id, created_at) on table 'orders'",
+                "Apply composite index (customer_id, created_at) on table orders",
                 "Scale connection pool maximum from 50 to 120 connections",
                 "Enable RDS Performance Insights slow query logger"
               ]
             }
           }')
 
-        aws events put-events \
-            --entries "[{\"Source\": \"aws.aidevops\", \"DetailType\": \"Investigation Completed\", \"Detail\": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .), \"Resources\": [\"arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}\"]}]" \
-            --region "$TARGET_REGION" > /dev/null
+        COMP_ENTRY_FILE="/tmp/eb-entry-comp-$$.json"
+        cat << EOF > "$COMP_ENTRY_FILE"
+[
+  {
+    "Source": "aws.aidevops",
+    "DetailType": "Investigation Completed",
+    "Detail": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .),
+    "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]
+  }
+]
+EOF
+        aws events put-events --entries "file://${COMP_ENTRY_FILE}" --region "$TARGET_REGION" > /dev/null 2>&1
+        rm -f "$COMP_ENTRY_FILE"
 
         sleep 5
         echo -e "  ${GREEN}✓ RCA comment and findings successfully published to ${MAPPED_ISSUE}!${NC}"
     else
-        echo -e "  ${YELLOW}[NOTE] Could not immediately confirm issue key in DynamoDB. Check CloudWatch logs:${NC}"
-        echo -e "  /aws/lambda/${LAMBDA_FUNCTION_NAME}"
+        echo -e "  ${YELLOW}[NOTE] Could not find mapped issue in DynamoDB for task ${TEST_TASK_ID}.${NC}"
+        echo -e "  Printing recent Lambda logs for debugging:\n"
+        aws logs tail "/aws/lambda/${LAMBDA_FUNCTION_NAME}" --region "$TARGET_REGION" --since 5m --format short 2>/dev/null || true
     fi
 fi
 
