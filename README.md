@@ -12,7 +12,28 @@ Based on the official AWS DevOps Architecture:
 - [AWS DevOps Blog: Integrate AWS DevOps Agent with third-party tools using Amazon EventBridge](https://aws.amazon.com/blogs/devops/integrate-aws-devops-agent-with-third-party-tools-using-amazon-eventbridge/)
 - [aws-samples/sample-aws-devops-agent-eventbridge-integration](https://github.com/aws-samples/sample-aws-devops-agent-eventbridge-integration)
 
-Repository Target: [https://github.com/ksravikumar2005/devops-agent-jira](https://github.com/ksravikumar2005/devops-agent-jira)
+---
+
+## 🔍 Verifying Your Jira API Key (Pre-Flight Check)
+
+Before running the deployment, verify your Jira Cloud URL, user email, and API token directly from AWS CloudShell or your local terminal:
+
+```bash
+# 1. Test Jira Authentication (Returns HTTP 200 with your user profile details)
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/myself"
+
+# 2. Test Project Access (Verify your project key, e.g. KAN or OPS)
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/project/YOUR_PROJECT_KEY"
+```
+
+> [!TIP]
+> **Expected Outcome**: An `HTTP/2 200 OK` response with a JSON payload containing your `displayName` and `accountId`.  
+> - If you receive `HTTP 401 Unauthorized`, verify that your email matches your Atlassian login and regenerate your API token.  
+> - If you receive `HTTP 404 Not Found`, ensure your project key matches the exact uppercase code shown under the **Key** column in Jira (e.g. `KAN`).
 
 ---
 
@@ -83,6 +104,48 @@ sequenceDiagram
 
 ---
 
+## 📦 What's Getting Deployed
+
+When you deploy this integration, the setup script provisions the following infrastructure in your AWS account and establishes the Jira Cloud bridge:
+
+```text
+[AWS DevOps Agent Space] ──► [Amazon EventBridge Rule]
+                                    │
+                                    ▼
+                          [AWS Lambda Handler] ◄──► [AWS Secrets Manager]
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  ▼                                   ▼
+        [Amazon DynamoDB]                 [Atlassian Jira Cloud]
+     (State & Mapping Table)             (Issues, Comments, RCA)
+                  ▲                                   │
+                  │                                   ▼
+    [Lambda Webhook Receiver] ◄────────────── [Jira Webhook (/investigate)]
+```
+
+### 1. AWS CloudFormation Stack (`devops-agent-jira-integration`)
+| Provisioned AWS Resource | Resource Name / Identifier | Purpose |
+| :--- | :--- | :--- |
+| **AWS Secrets Manager Secret** | `devops-agent/jira-credentials` | Encrypted with AWS KMS; securely stores Jira Base URL, email, API token, project key (`KAN`), and issue type (`Task`). |
+| **Amazon DynamoDB Table** | `devops-agent-jira-mappings` | Pay-per-request billing, PITR enabled, server-side encrypted; maps DevOps Agent `taskId` to Jira `issueKey`. |
+| **AWS Lambda: Event Handler** | `devops-agent-jira-integration-EventHandler` | Python 3.12 (256 MB, 60s timeout); processes EventBridge `aws.aidevops` lifecycle events and manages Jira issues via REST API v3. |
+| **Amazon EventBridge Rule** | `devops-agent-jira-integration-InvestigationRule` | Filters events with `source: ["aws.aidevops"]` and `detail-type: [{"prefix": "Investigation"}]` to trigger the Lambda handler. |
+| **AWS Lambda: Webhook Receiver** | `devops-agent-jira-integration-WebhookReceiver` | Python 3.12 with public HTTPS Function URL; receives inbound Jira webhooks (e.g. `/investigate` comments) for bi-directional incident management. |
+| **Lambda Function URL** | `https://<id>.lambda-url.<region>.on.aws/` | Inbound webhook endpoint for Jira with CORS enabled. |
+| **IAM Execution Role** | `devops-agent-jira-integration-ExecutionRole` | Least-privilege role scoped to DynamoDB table, Secrets Manager secret ARN, EventBridge, and CloudWatch Logs. |
+| **CloudWatch Log Groups** | `/aws/lambda/devops-agent-jira-integration-*` | 30-day retention logging for diagnostics and auditability. |
+
+### 2. Atlassian Jira Cloud Resources Synchronized
+| Jira Resource | Details |
+| :--- | :--- |
+| **Automated Investigation Issues** | Automatically created in project `KAN` with summary, context panel, and deep link to the AWS Console DevOps Agent Space. |
+| **Diagnostic Journal Comments** | Appends step-by-step progress notes to the Jira ticket as the agent correlates logs, metrics, and traces. |
+| **Root Cause Analysis (RCA)** | Success panel containing root cause summary, affected resource ARNs, and recommended remediations. |
+| **Labels & Tags** | Attaches `aws-devops-agent`, `automated-investigation`, `rca-completed`, and `aws-<region>`. |
+| **Workflow Status Transitions** | Automatically transitions ticket status (e.g. to *In Progress*). |
+
+---
+
 ## 📋 Minimum Requirements
 
 Before deploying this integration, ensure your environment meets the following baseline requirements:
@@ -140,29 +203,6 @@ If deploying from your local workstation instead of AWS CloudShell:
 
 4. Click **Create**.
 5. **Copy the token immediately**: Store it securely. You will paste this token into the CloudShell interactive setup script.
-
----
-
-### 🔍 Verifying Your Jira API Key (Pre-Flight Check)
-
-Before running the deployment, you can quickly test your Jira URL, email, and API token directly from AWS CloudShell or your local terminal:
-
-```bash
-# 1. Test Jira Authentication (Returns HTTP 200 with your profile details)
-curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
-  -H "Accept: application/json" \
-  "https://YOUR_ORG.atlassian.net/rest/api/3/myself"
-
-# 2. Test Project Access (Verify your project key, e.g. KAN or OPS)
-curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
-  -H "Accept: application/json" \
-  "https://YOUR_ORG.atlassian.net/rest/api/3/project/YOUR_PROJECT_KEY"
-```
-
-> [!TIP]
-> **Expected Outcome**: An `HTTP/2 200 OK` response with a JSON payload containing your `displayName` and `accountId`.  
-> If you receive `HTTP 401 Unauthorized`, verify that your email matches your Atlassian login and regenerate the API token.  
-> If you receive `HTTP 404 Not Found`, ensure your project key matches the exact code shown under the **Key** column in Jira.
 
 ---
 
