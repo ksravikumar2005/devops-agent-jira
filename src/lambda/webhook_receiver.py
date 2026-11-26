@@ -19,6 +19,7 @@ import json
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+import hmac
 import boto3
 from botocore.exceptions import ClientError
 
@@ -36,10 +37,34 @@ DYNAMODB_TABLE_NAME = os.environ.get("DYNAMODB_TABLE_NAME", "devops-agent-jira-m
 JIRA_SECRET_NAME = os.environ.get("JIRA_SECRET_NAME", "devops-agent/jira-credentials")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-# Lazy-loaded clients
+# Lazy-loaded clients and cached secret
 _DEV_OPS_CLIENT = None
 _JIRA_CLIENT: Optional[JiraClient] = None
 _DDB_TABLE = None
+_WEBHOOK_SECRET_TOKEN: Optional[str] = None
+
+
+def get_expected_webhook_token() -> Optional[str]:
+    """Retrieve expected webhook secret token from environment or AWS Secrets Manager."""
+    global _WEBHOOK_SECRET_TOKEN
+    if _WEBHOOK_SECRET_TOKEN is not None:
+        return _WEBHOOK_SECRET_TOKEN
+
+    env_token = os.environ.get("WEBHOOK_SECRET_TOKEN")
+    if env_token:
+        _WEBHOOK_SECRET_TOKEN = env_token
+        return _WEBHOOK_SECRET_TOKEN
+
+    try:
+        resp = secrets_client.get_secret_value(SecretId=JIRA_SECRET_NAME)
+        data = json.loads(resp.get("SecretString", "{}"))
+        sec = data.get("webhook_secret_token") or data.get("webhookSecret") or data.get("secret_token")
+        if sec:
+            _WEBHOOK_SECRET_TOKEN = str(sec).strip()
+            return _WEBHOOK_SECRET_TOKEN
+    except Exception as e:
+        logger.warning(f"Could not load webhook secret token from secret '{JIRA_SECRET_NAME}': {e}")
+    return None
 
 
 def get_devops_client():
@@ -120,6 +145,31 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Can be invoked via AWS Lambda Function URL.
     """
     logger.info("Received Jira webhook event")
+
+    # --------------------------------------------------------------------------
+    # 0. Enforce Shared Secret Token Authentication (Security Perimeter)
+    # --------------------------------------------------------------------------
+    expected_token = get_expected_webhook_token()
+    if expected_token:
+        # Check query string parameters (e.g. ?token=... or ?secret=...)
+        query_params = event.get("queryStringParameters") or {}
+        provided_token = query_params.get("token") or query_params.get("secret")
+
+        # Also check HTTP headers (e.g. x-webhook-token, x-api-key)
+        if not provided_token:
+            headers = event.get("headers") or {}
+            lower_headers = {k.lower(): v for k, v in headers.items()}
+            provided_token = lower_headers.get("x-webhook-token") or lower_headers.get("x-api-key")
+
+        if not provided_token or not hmac.compare_digest(str(provided_token), str(expected_token)):
+            logger.warning("Rejected unauthorized webhook request: missing or invalid shared secret token.")
+            return {
+                "statusCode": 403,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Forbidden: Invalid or missing webhook secret token."})
+            }
+        logger.info("✓ Webhook shared secret token successfully authenticated.")
+
     body_str = event.get("body", "{}")
     if event.get("isBase64Encoded", False):
         import base64

@@ -347,9 +347,21 @@ while [ "$JIRA_VALID" = false ]; do
 done
 
 # ------------------------------------------------------------------------------
-# 4. Provision Secrets Manager Secret
+# 4. Provision Secrets Manager Secret & Shared Webhook Token
 # ------------------------------------------------------------------------------
-echo -e "\n${BLUE}==> [4/6] Storing Jira Credentials in AWS Secrets Manager...${NC}"
+echo -e "\n${BLUE}==> [4/6] Storing Jira Credentials & Shared Secret in AWS Secrets Manager...${NC}"
+
+# Generate or reuse high-entropy webhook shared secret token
+WEBHOOK_SECRET_TOKEN="${JIRA_WEBHOOK_SECRET:-}"
+if [ -z "$WEBHOOK_SECRET_TOKEN" ]; then
+    if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$TARGET_REGION" &>/dev/null; then
+        EXISTING_JSON=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --region "$TARGET_REGION" --query "SecretString" --output text 2>/dev/null || echo "{}")
+        WEBHOOK_SECRET_TOKEN=$(echo "$EXISTING_JSON" | jq -r '.webhook_secret_token // empty' 2>/dev/null || echo "")
+    fi
+fi
+if [ -z "$WEBHOOK_SECRET_TOKEN" ]; then
+    WEBHOOK_SECRET_TOKEN=$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
+fi
 
 SECRET_PAYLOAD=$(jq -n \
   --arg url "$JIRA_URL" \
@@ -357,12 +369,14 @@ SECRET_PAYLOAD=$(jq -n \
   --arg token "$JIRA_TOKEN" \
   --arg proj "$JIRA_PROJECT" \
   --arg itype "$JIRA_ISSUE_TYPE" \
+  --arg wsec "$WEBHOOK_SECRET_TOKEN" \
   '{
     jira_base_url: $url,
     jira_user_email: $email,
     jira_api_token: $token,
     jira_project_key: $proj,
-    jira_issue_type: $itype
+    jira_issue_type: $itype,
+    webhook_secret_token: $wsec
   }')
 
 if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$TARGET_REGION" &>/dev/null; then
@@ -612,16 +626,17 @@ elif [ "$TEST_CHOICE" = "2" ]; then
             }
           }')
 
+        SECURED_WEBHOOK_URL="${WEBHOOK_URL}?token=${WEBHOOK_SECRET_TOKEN}"
         WEBHOOK_RESP=$(curl -s -L \
           -H "Content-Type: application/json" \
           -X POST \
           -d "$WEBHOOK_TEST_PAYLOAD" \
-          "$WEBHOOK_URL" 2>/dev/null || echo "{}")
+          "$SECURED_WEBHOOK_URL" 2>/dev/null || echo "{}")
 
         TRIGGERED_TASK=$(echo "$WEBHOOK_RESP" | jq -r '.taskId // empty' 2>/dev/null || echo "")
 
         if [ -n "$TRIGGERED_TASK" ]; then
-            echo -e "  ${GREEN}✓ Webhook successfully triggered AWS DevOps Agent!${NC}"
+            echo -e "  ${GREEN}✓ Secured Webhook successfully triggered AWS DevOps Agent!${NC}"
             echo -e "  Initiated DevOps Agent Task ID: ${BOLD}${TRIGGERED_TASK}${NC}"
             echo -e "  DevOps Agent has acknowledged and replied to Jira issue ${BOLD}${NEW_ISSUE_KEY}${NC}."
 
@@ -658,12 +673,15 @@ echo -e "  Lambda Event Handler:   ${BOLD}${LAMBDA_FUNCTION_NAME}${NC}"
 echo -e "  Jira Project:           ${BOLD}${JIRA_PROJECT} (${JIRA_URL})${NC}"
 
 if [ -n "$WEBHOOK_URL" ] && [ "$WEBHOOK_URL" != "None" ]; then
-    echo -e "\n${CYAN}--- Bi-directional Jira Webhook Endpoint ---${NC}"
-    echo -e "  Jira Webhook URL:       ${BOLD}${WEBHOOK_URL}${NC}"
-    echo -e "  To trigger investigations directly from Jira:"
-    echo -e "  1. In Jira, navigate to Settings > System > Webhooks."
-    echo -e "  2. Register this URL and listen for 'Issue Created' or 'Comment Created'."
-    echo -e "  3. Commenting '/investigate' on any ticket will trigger autonomous AWS analysis!"
+    SECURED_WEBHOOK_URL="${WEBHOOK_URL}?token=${WEBHOOK_SECRET_TOKEN}"
+    echo -e "\n${CYAN}--- Bi-directional Jira Webhook Endpoint (Secured with Shared Secret) ---${NC}"
+    echo -e "  Secured Webhook URL:    ${BOLD}${SECURED_WEBHOOK_URL}${NC}"
+    echo -e "  Shared Secret Token:    ${BOLD}${WEBHOOK_SECRET_TOKEN}${NC}"
+    echo -e "  To register in Jira:"
+    echo -e "  1. In Jira, navigate to Settings (gear ⚙️) > System > Webhooks."
+    echo -e "  2. Click '+ Create a Webhook' and paste the full Secured URL above (including '?token=...')."
+    echo -e "  3. Check 'Issue: created, updated' and 'Comment: created'."
+    echo -e "  4. Any unauthorized requests without this token are automatically rejected with HTTP 403 Forbidden!"
 fi
 
 echo -e "\n${BOLD}Thank you for deploying AWS DevOps Agent to Jira integration!${NC}\n"

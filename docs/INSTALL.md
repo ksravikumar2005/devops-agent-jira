@@ -125,18 +125,23 @@ Select verification scenario [1/2/3] (default: 1):
 
 ---
 
-## 5. Register Inbound Webhook in Jira Cloud (Bi-Directional Flow)
+## 5. Register Inbound Webhook in Jira Cloud (Secured with Shared Secret)
 
-To enable Jira to automatically notify AWS DevOps Agent when tickets are created or commented with `/investigate`:
+To enable Jira to securely notify AWS DevOps Agent when tickets are created or commented with `/investigate`, the endpoint is protected by a **shared secret token**:
 
-1. Copy your deployed `JiraWebhookUrl`:
+1. Retrieve your secured `JiraWebhookUrl`:
    ```bash
-   aws cloudformation describe-stacks \
+   WEBHOOK_URL=$(aws cloudformation describe-stacks \
      --stack-name devops-agent-jira-integration \
      --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
-     --output text
+     --output text)
+
+   WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
+     --secret-id "devops-agent/jira-credentials" \
+     --query "SecretString" --output text | jq -r '.webhook_secret_token')
+
+   echo "Secured URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
    ```
-   *(Example: `https://3ra5eo6jjd5orsf4xvtwy6onbe0dvkyr.lambda-url.us-east-1.on.aws/`)*
 2. In Atlassian Jira Cloud:
    - Click the gear icon (**Settings ⚙️**) in the top right header.
    - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
@@ -144,12 +149,12 @@ To enable Jira to automatically notify AWS DevOps Agent when tickets are created
    - Configure:
      - **Name**: `AWS DevOps Agent Integration`
      - **Status**: `Enabled`
-     - **URL**: Paste your `JiraWebhookUrl`.
+     - **URL**: Paste your secured `JiraWebhookUrl` (including the `?token=...` parameter).
      - **Issue related events**:
        - Check **Issue**: `created`, `updated`
        - Check **Comment**: `created`
      - *(Optional JQL Filter)*: `project = "KAN"`
-   - Click **Save**.
+   - Click **Save**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
 
 ---
 

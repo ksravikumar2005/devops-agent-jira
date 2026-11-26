@@ -72,15 +72,24 @@ When the AWS Lambda function creates a ticket via the REST API, it sends:
 
 To allow engineers to trigger autonomous AWS DevOps Agent investigations directly from Jira:
 
-### Step 5.1: Retrieve the Webhook URL
-From your CloudFormation stack outputs:
+### Step 5.1: Retrieve the Secured Webhook URL
+The webhook URL is protected with a **cryptographic shared secret token** stored in AWS Secrets Manager (`devops-agent/jira-credentials`). Any incoming webhook request lacking this valid token is immediately dropped with **HTTP 403 Forbidden**.
+
+Retrieve the full secured URL from Secrets Manager and CloudFormation:
 ```bash
-aws cloudformation describe-stacks \
+WEBHOOK_URL=$(aws cloudformation describe-stacks \
   --stack-name devops-agent-jira-integration \
   --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
-  --output text
+  --output text)
+
+WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
+  --secret-id "devops-agent/jira-credentials" \
+  --query "SecretString" --output text | jq -r '.webhook_secret_token')
+
+echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
 ```
-*(Example: `https://3ra5eo6jjd5orsf4xvtwy6onbe0dvkyr.lambda-url.us-east-1.on.aws/`)*
+
+*(Example: `https://3ra5eo6jjd5orsf4xvtwy6onbe0dvkyr.lambda-url.us-east-1.on.aws/?token=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6`)*
 
 ### Step 5.2: Register the Webhook in Jira
 1. In Jira, click the **Settings icon** (gear ⚙️ in the top right header).
@@ -90,7 +99,7 @@ aws cloudformation describe-stacks \
 5. Configure the webhook settings:
    - **Name**: `AWS DevOps Agent Integration`
    - **Status**: `Enabled`
-   - **URL**: Paste your `JiraWebhookUrl` from Step 5.1.
+   - **URL**: Paste your **Secured Webhook URL** (including the `?token=...` parameter).
    - **Issue related events**:
      - Check **Issue**: `created`, `updated`
      - Check **Comment**: `created`

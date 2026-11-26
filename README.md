@@ -378,10 +378,16 @@ Enable engineers to trigger autonomous investigations directly from Jira:
 
 1. Obtain your `JiraWebhookUrl` output from CloudFormation:
    ```bash
-   aws cloudformation describe-stacks \
+   WEBHOOK_URL=$(aws cloudformation describe-stacks \
      --stack-name devops-agent-jira-integration \
      --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
-     --output text
+     --output text)
+
+   WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
+     --secret-id "devops-agent/jira-credentials" \
+     --query "SecretString" --output text | jq -r '.webhook_secret_token')
+
+   echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
    ```
 2. In Jira Cloud:
    - Click the gear icon (**Settings ⚙️**) in the top right header.
@@ -390,7 +396,7 @@ Enable engineers to trigger autonomous investigations directly from Jira:
    - Configure:
      - **Name**: `AWS DevOps Agent Integration`
      - **Status**: `Enabled`
-     - **URL**: Paste your `JiraWebhookUrl`.
+     - **URL**: Paste your secured URL (including `?token=...`). Any request lacking this cryptographic token is rejected with **HTTP 403 Forbidden**.
      - **Issue related events**:
        - Check **Issue**: `created`, `updated`
        - Check **Comment**: `created`
