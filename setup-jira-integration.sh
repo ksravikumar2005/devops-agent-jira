@@ -116,23 +116,7 @@ while [ "$JIRA_VALID" = false ]; do
     read -rp "Jira Admin / User Email: " JIRA_EMAIL
 
     # Prompt password securely
-    prompt="Jira API Token: "
-    JIRA_TOKEN=""
-    while IFS= read -p "$prompt" -r -s -n 1 char; do
-        if [[ $char == $'\0' ]]; then
-            break
-        elif [[ $char == $'\177' ]] || [[ $char == $'\b' ]]; then
-            if [ -n "$JIRA_TOKEN" ]; then
-                prompt=$'\b \b'
-                JIRA_TOKEN="${JIRA_TOKEN%?}"
-            else
-                prompt=''
-            fi
-        else
-            prompt='*'
-            JIRA_TOKEN+="$char"
-        fi
-    done
+    read -s -rp "Jira API Token: " JIRA_TOKEN
     echo ""
 
     read -rp "Jira Project Key (e.g. OPS, INC, DEVOPS) [OPS]: " INPUT_PROJECT
@@ -142,9 +126,9 @@ while [ "$JIRA_VALID" = false ]; do
     JIRA_ISSUE_TYPE="${INPUT_ITYPE:-Incident}"
 
     echo -e "\n  ${CYAN}Testing Jira Cloud API connection...${NC}"
-    AUTH_HEADER="Basic $(echo -n "${JIRA_EMAIL}:${JIRA_TOKEN}" | base64)"
     
-    HTTP_RESP=$(curl -s -w "\n%{http_code}" -H "Authorization: ${AUTH_HEADER}" -H "Accept: application/json" "${JIRA_URL}/rest/api/3/myself" || echo "000")
+    # Use curl's native basic-auth (-u) to avoid base64 newline wrapping bugs in GNU coreutils
+    HTTP_RESP=$(curl -s -L -w "\n%{http_code}" --connect-timeout 15 -u "${JIRA_EMAIL}:${JIRA_TOKEN}" -H "Accept: application/json" "${JIRA_URL}/rest/api/3/myself" 2>&1)
     HTTP_CODE=$(echo "$HTTP_RESP" | tail -n1)
     HTTP_BODY=$(echo "$HTTP_RESP" | sed '$d')
 
@@ -153,7 +137,7 @@ while [ "$JIRA_VALID" = false ]; do
         echo -e "  ${GREEN}✓ Successfully authenticated as Jira user: ${BOLD}${DISPLAY_NAME}${NC}"
 
         # Verify Project exists
-        PROJ_RESP=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: ${AUTH_HEADER}" "${JIRA_URL}/rest/api/3/project/${JIRA_PROJECT}")
+        PROJ_RESP=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 -u "${JIRA_EMAIL}:${JIRA_TOKEN}" -H "Accept: application/json" "${JIRA_URL}/rest/api/3/project/${JIRA_PROJECT}")
         if [ "$PROJ_RESP" -eq 200 ]; then
             echo -e "  ${GREEN}✓ Project '${JIRA_PROJECT}' exists and is accessible.${NC}"
             JIRA_VALID=true
