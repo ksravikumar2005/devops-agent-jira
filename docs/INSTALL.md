@@ -41,7 +41,27 @@ Before beginning deployment, ensure you have the following:
 
 ---
 
-## 3. Deployment using AWS CloudShell (Interactive)
+## 3. Verifying Your Jira API Key (Pre-Flight Check)
+
+Before running the deployment wizard, you can verify your credentials directly using `curl`:
+
+```bash
+# Verify authentication
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/myself"
+
+# Verify project access
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/project/YOUR_PROJECT_KEY"
+```
+
+A successful response returns `HTTP/2 200` with user details (such as `displayName` and `accountId`).
+
+---
+
+## 4. Deployment using AWS CloudShell (Interactive)
 
 ### Step 3.1: Launch AWS CloudShell
 1. Open the [AWS Management Console](https://console.aws.amazon.com/).

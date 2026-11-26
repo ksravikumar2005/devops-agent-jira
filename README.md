@@ -143,6 +143,29 @@ If deploying from your local workstation instead of AWS CloudShell:
 
 ---
 
+### 🔍 Verifying Your Jira API Key (Pre-Flight Check)
+
+Before running the deployment, you can quickly test your Jira URL, email, and API token directly from AWS CloudShell or your local terminal:
+
+```bash
+# 1. Test Jira Authentication (Returns HTTP 200 with your profile details)
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/myself"
+
+# 2. Test Project Access (Verify your project key, e.g. KAN or OPS)
+curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+  -H "Accept: application/json" \
+  "https://YOUR_ORG.atlassian.net/rest/api/3/project/YOUR_PROJECT_KEY"
+```
+
+> [!TIP]
+> **Expected Outcome**: An `HTTP/2 200 OK` response with a JSON payload containing your `displayName` and `accountId`.  
+> If you receive `HTTP 401 Unauthorized`, verify that your email matches your Atlassian login and regenerate the API token.  
+> If you receive `HTTP 404 Not Found`, ensure your project key matches the exact code shown under the **Key** column in Jira.
+
+---
+
 ### Method A: Interactive AWS CloudShell (Recommended)
 
 1. Open AWS CloudShell in your browser.
