@@ -81,7 +81,7 @@ bash cloudshell-setup.sh
 ### Step 3.4: Follow the Interactive Prompts
 1. **Target Region**: Confirm your AWS region (default: current region).
 2. **Agent Space ID**: The wizard attempts to discover your Agent Space using `aws aidevops list-agent-spaces`. If found, press `Enter` to use it, or enter your custom Space ID.
-3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net`.
+3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (do not worry about accidental trailing slashes like `https://mycompany.atlassian.net/` — the script and Lambda automatically strip them to prevent `//` path bugs).
 4. **Jira User Email**: Enter the email of the Jira administrator or service account.
 5. **Jira API Token**: Paste your API token (input is masked for security).
 6. **Jira Project Key**: Enter the key of the project where incident tickets should be created (e.g., `OPS`).

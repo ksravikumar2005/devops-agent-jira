@@ -182,7 +182,9 @@ curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
    - Confirm your target AWS Region.
    - Choose or enter your AWS DevOps Agent Space ID.
    - Input your Jira URL (`https://mycompany.atlassian.net`), User Email, and API Token.
-   - Specify your Jira Project Key (`OPS`) and Issue Type (`Incident`).
+     > [!NOTE]
+     > **Trailing Slashes**: Enter your URL without a trailing slash (e.g. `https://mycompany.atlassian.net`). If you accidentally include a trailing slash (`https://mycompany.atlassian.net/`), the setup script and Lambda integration automatically sanitize and strip it to prevent double-slash API path errors (`//rest/api/3/...`).
+   - Specify your Jira Project Key (`OPS` or `KAN`) and Issue Type (`Incident` or `Task`).
    - Allow the script to run the live pre-flight check and synthetic test.
 
 ---
