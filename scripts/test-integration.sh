@@ -75,14 +75,25 @@ PROGRESS_DETAIL=$(jq -n \
     }
   }')
 
-aws events put-events \
-  --entries "[{\"Source\": \"aws.aidevops\", \"DetailType\": \"Investigation In Progress\", \"Detail\": $(echo "$PROGRESS_DETAIL" | jq -c . | jq -R .), \"Resources\": [\"arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}\"]}]" \
-  --region "$REGION"
+PROG_ENTRY="/tmp/test-prog-$$.json"
+cat << EOF > "$PROG_ENTRY"
+[
+  {
+    "Source": "aws.aidevops",
+    "DetailType": "Investigation In Progress",
+    "Detail": $(echo "$PROGRESS_DETAIL" | jq -c . | jq -R .),
+    "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
+  }
+]
+EOF
+
+aws events put-events --entries "file://${PROG_ENTRY}" --region "$REGION" > /dev/null
+rm -f "$PROG_ENTRY"
 
 echo "Sent Investigation In Progress event."
 sleep 4
 
-echo -e "\n[3/3] Emitting 'Investigation Completed' with Root Cause Analysis..."
+echo -e "\n[3/3] Emitting 'Investigation Completed' with Root Cause Analysis (RCA)..."
 COMPLETED_DETAIL=$(jq -n \
   --arg task "$TASK_ID" \
   --arg exec "$EXEC_ID" \
@@ -108,15 +119,53 @@ COMPLETED_DETAIL=$(jq -n \
     }
   }')
 
-aws events put-events \
-  --entries "[{\"Source\": \"aws.aidevops\", \"DetailType\": \"Investigation Completed\", \"Detail\": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .), \"Resources\": [\"arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}\"]}]" \
-  --region "$REGION"
+COMP_ENTRY="/tmp/test-comp-$$.json"
+cat << EOF > "$COMP_ENTRY"
+[
+  {
+    "Source": "aws.aidevops",
+    "DetailType": "Investigation Completed",
+    "Detail": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .),
+    "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
+  }
+]
+EOF
+
+aws events put-events --entries "file://${COMP_ENTRY}" --region "$REGION" > /dev/null
+rm -f "$COMP_ENTRY"
 
 echo "Sent Investigation Completed event."
-echo -e "\nCheck DynamoDB table 'devops-agent-jira-mappings' for taskId: ${TASK_ID}"
-aws dynamodb get-item \
+echo "Waiting 5 seconds for final RCA comment publishing..."
+sleep 5
+
+# Query DynamoDB for the created issue
+echo -e "\nFetching created Jira Issue details from DynamoDB..."
+MAPPED_KEY=$(aws dynamodb get-item \
   --table-name "devops-agent-jira-mappings" \
   --key "{\"taskId\": {\"S\": \"${TASK_ID}\"}}" \
-  --region "$REGION" 2>/dev/null || true
+  --region "$REGION" \
+  --query "Item.jiraIssueKey.S" \
+  --output text 2>/dev/null || echo "")
+
+# Read secret to extract Jira base URL
+JIRA_URL=$(aws secretsmanager get-secret-value \
+  --secret-id "devops-agent/jira-credentials" \
+  --region "$REGION" \
+  --query "SecretString" \
+  --output text 2>/dev/null | jq -r '.jira_base_url // empty' 2>/dev/null || echo "")
+
+if [ -n "$MAPPED_KEY" ] && [ "$MAPPED_KEY" != "None" ]; then
+    echo -e "\n========================================================"
+    echo -e "SUCCESS! Jira ticket created and RCA posted:"
+    echo -e "  Task ID:   ${TASK_ID}"
+    echo -e "  Issue Key: ${MAPPED_KEY}"
+    if [ -n "$JIRA_URL" ]; then
+        echo -e "  Direct URL: ${JIRA_URL}/browse/${MAPPED_KEY}"
+    fi
+    echo -e "========================================================"
+else
+    echo -e "\nCould not find mapped issue key in DynamoDB. Recent logs:"
+    aws logs tail "/aws/lambda/devops-agent-jira-integration-EventHandler" --region "$REGION" --since 5m --format short 2>/dev/null || true
+fi
 
 echo -e "\n=== Test sequence finished ==="
