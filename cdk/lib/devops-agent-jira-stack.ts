@@ -84,14 +84,19 @@ export class DevOpsAgentJiraStack extends cdk.Stack {
       memorySize: 256,
       environment: {
         AGENT_SPACE_ID: agentSpaceId,
+        DYNAMODB_TABLE_NAME: mappingTable.tableName,
+        JIRA_SECRET_NAME: secretName,
         LOG_LEVEL: 'INFO',
       },
       description: 'Inbound Jira Cloud webhook endpoint for bidirectional incident triage',
     });
 
+    mappingTable.grantReadWriteData(webhookReceiverLambda);
+    jiraSecret.grantRead(webhookReceiverLambda);
+
     webhookReceiverLambda.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['events:PutEvents'],
+        actions: ['events:PutEvents', 'devops-agent:*', 'aidevops:*'],
         resources: ['*'],
       })
     );

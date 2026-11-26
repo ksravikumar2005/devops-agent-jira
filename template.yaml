@@ -191,6 +191,8 @@ Resources:
       Environment:
         Variables:
           AGENT_SPACE_ID: !Ref AgentSpaceId
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          JIRA_SECRET_NAME: !Ref SecretName
           LOG_LEVEL: !Ref LogLevel
       Tags:
         - Key: App
