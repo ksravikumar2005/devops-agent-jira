@@ -117,17 +117,41 @@ When confirmed, it will:
 
 ---
 
-## 5. Manual CLI Test
+## 5. Verification: Real Investigation vs. Synthetic Testing
 
-You can manually trigger tests anytime using the included test runner:
+### Option A: Trigger a REAL DevOps Agent Investigation (Recommended)
+Trigger an actual backlog task of type `INVESTIGATION` inside your live AWS DevOps Agent Space using the official AWS CLI. AWS DevOps Agent will autonomously analyze your infrastructure and emit authentic `aws.aidevops` lifecycle events (`Investigation Created`, `Investigation In Progress`, `Investigation Completed`) to EventBridge:
+
+```bash
+bash scripts/create-real-investigation.sh
+```
+
+Or invoke directly via the official AWS CLI:
+```bash
+aws devops-agent create-backlog-task \
+    --agent-space-id "3f1e5f09-659d-4073-a7a5-2b5ca9e633bd" \
+    --task-type "INVESTIGATION" \
+    --title "Investigate Latency Spike on Order Processing Microservice" \
+    --description "Autonomous root cause analysis across CloudWatch, X-Ray, and ECS logs" \
+    --priority "HIGH" \
+    --region "us-east-1"
+```
+
+### Option B: Synthetic Test Suite
+You can manually trigger synthetic tests anytime using the included test runner:
 
 ```bash
 bash scripts/test-integration.sh
 ```
 
+Or test Lambda directly:
+```bash
+bash scripts/test-integration.sh --direct
+```
+
 Or trigger using the Python CLI simulator:
 ```bash
-python3 scripts/simulate-investigation.py --region us-east-1 --space-id default
+python3 scripts/simulate-investigation.py --region us-east-1 --space-id 3f1e5f09-659d-4073-a7a5-2b5ca9e633bd
 ```
 
 ---

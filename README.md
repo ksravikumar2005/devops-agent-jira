@@ -382,17 +382,56 @@ Enable engineers to trigger autonomous investigations directly from Jira:
 
 ---
 
-## 🧪 Verification & Synthetic Testing
+## 🧪 Verification & Live Testing
 
-Run the included automated integration test script to inject synthetic `aws.aidevops` events:
+You can verify and test your integration either by triggering a **real autonomous investigation** inside AWS DevOps Agent, or by running a **synthetic event simulation**.
+
+---
+
+### Option A: Trigger a REAL DevOps Agent Investigation (Recommended) 🚀
+
+This triggers an actual backlog task of type `INVESTIGATION` inside your live AWS DevOps Agent Space using the official AWS CLI. The AWS DevOps Agent service will autonomously start analyzing your AWS infrastructure and emit authentic `aws.aidevops` lifecycle events (`Investigation Created`, `Investigation In Progress`, `Investigation Completed`) to EventBridge:
+
+```bash
+bash scripts/create-real-investigation.sh
+```
+
+*(Optional custom title & description)*:
+```bash
+bash scripts/create-real-investigation.sh \
+  "Investigate 504 Gateway Timeout Spikes on API Gateway" \
+  "Correlate ALB metrics, Lambda concurrency throttling, and DynamoDB read latency"
+```
+
+#### Or run directly via standard AWS CLI:
+```bash
+aws devops-agent create-backlog-task \
+    --agent-space-id "3f1e5f09-659d-4073-a7a5-2b5ca9e633bd" \
+    --task-type "INVESTIGATION" \
+    --title "Investigate Latency Spike on Order Processing Microservice" \
+    --description "Autonomous root cause analysis across CloudWatch, X-Ray, and ECS logs" \
+    --priority "HIGH" \
+    --region "us-east-1"
+```
+
+---
+
+### Option B: Synthetic Test Suite
+
+Run the included automated integration test script to inject synthetic `custom.aidevops` events into EventBridge:
 
 ```bash
 bash scripts/test-integration.sh
 ```
 
+Or test Lambda directly without publishing to EventBridge:
+```bash
+bash scripts/test-integration.sh --direct
+```
+
 Or run the Python simulator:
 ```bash
-python3 scripts/simulate-investigation.py --region us-east-1 --space-id default
+python3 scripts/simulate-investigation.py --region us-east-1 --space-id 3f1e5f09-659d-4073-a7a5-2b5ca9e633bd
 ```
 
 ### What you will observe in Jira:
