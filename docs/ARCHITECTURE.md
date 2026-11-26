@@ -10,8 +10,8 @@ This document details the architectural design, event lifecycles, and data contr
 [AWS CloudWatch / Alarms / Anomaly Triggers]
                   │
                   ▼
-         [AWS DevOps Agent Space]
-                  │
+         [AWS DevOps Agent Space] ◄──(MCP Tools)──► [Atlassian Remote MCP Server]
+                  │                                  (Reads Jira / Confluence Runbooks)
                   │ (Emits lifecycle events)
                   ▼
      [Amazon EventBridge (default bus)]
@@ -23,6 +23,13 @@ This document details the architectural design, event lifecycles, and data contr
             ├── State Mapping (Amazon DynamoDB)
             └── REST API v3 (Atlassian Jira Cloud)
 ```
+
+### Synergy with Atlassian Remote MCP Server (`https://mcp.atlassian.com/v2/mcp`)
+AWS DevOps Agent supports registering the **Atlassian Remote MCP Server** as a **Capability Provider** inside your Agent Space.
+- **Atlassian Remote MCP Server (In-Investigation Tools)**: Used *inside* the agent's AI reasoning loop to query recent Jira deployments, search Confluence runbooks, and pull context from existing work items.
+- **Amazon EventBridge Integration (Lifecycle Orchestration)**: Used *outside* the agent to automatically create tracking tickets on alert triggers, update DynamoDB state, stream step-by-step progress comments, post final RCA summaries, and handle inbound webhooks (`/investigate`).
+
+Together, they form a complete closed-loop incident management ecosystem.
 
 ---
 
