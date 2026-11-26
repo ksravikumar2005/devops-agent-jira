@@ -26,11 +26,21 @@ NC="\033[0m"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Discover or fallback Agent Space ID
-SPACE_ID="${AGENT_SPACE_ID:-}"
-if [ -z "$SPACE_ID" ]; then
-    SPACE_ID=$(aws devops-agent list-agent-spaces --region "$REGION" --query "agentSpaces[0].agentSpaceId" --output text 2>/dev/null || echo "")
+# Discover or resolve Agent Space Name or ID
+RAW_SPACE="${AGENT_SPACE_ID:-${AGENT_SPACE_NAME:-${SPACE_NAME:-}}}"
+SPACE_ID=""
+
+SPACES_JSON=$(aws devops-agent list-agent-spaces --region "$REGION" --output json 2>/dev/null || echo "{}")
+if [ -n "$RAW_SPACE" ]; then
+    # Try resolving if a name was supplied
+    RESOLVED=$(echo "$SPACES_JSON" | jq -r --arg val "$RAW_SPACE" '.agentSpaces[]? | select((.name // "" | ascii_downcase) == ($val | ascii_downcase) or .agentSpaceId == $val) | .agentSpaceId' 2>/dev/null | head -n 1)
+    SPACE_ID="${RESOLVED:-$RAW_SPACE}"
 fi
+
+if [ -z "$SPACE_ID" ] || [ "$SPACE_ID" = "null" ]; then
+    SPACE_ID=$(echo "$SPACES_JSON" | jq -r '.agentSpaces[0].agentSpaceId // empty' 2>/dev/null || echo "")
+fi
+
 if [ -z "$SPACE_ID" ] || [ "$SPACE_ID" = "None" ]; then
     SPACE_ID="3f1e5f09-659d-4073-a7a5-2b5ca9e633bd"
 fi

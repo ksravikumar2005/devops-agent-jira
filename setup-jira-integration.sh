@@ -176,33 +176,66 @@ export AWS_DEFAULT_REGION="$TARGET_REGION"
 export AWS_REGION="$TARGET_REGION"
 
 # ------------------------------------------------------------------------------
-# 2. DevOps Agent Space Discovery
+# 2. DevOps Agent Space Discovery (Supports Space Name or Space ID)
 # ------------------------------------------------------------------------------
 echo -e "\n${BLUE}==> [2/6] Discovering AWS DevOps Agent Space...${NC}"
-DISCOVERED_SPACE=""
-if aws aidevops list-agent-spaces --region "$TARGET_REGION" &>/dev/null; then
+SPACES_JSON="{}"
+if aws devops-agent list-agent-spaces --region "$TARGET_REGION" &>/dev/null; then
+    SPACES_JSON=$(aws devops-agent list-agent-spaces --region "$TARGET_REGION" --output json 2>/dev/null || echo "{}")
+elif aws aidevops list-agent-spaces --region "$TARGET_REGION" &>/dev/null; then
     SPACES_JSON=$(aws aidevops list-agent-spaces --region "$TARGET_REGION" --output json 2>/dev/null || echo "{}")
-    DISCOVERED_SPACE=$(echo "$SPACES_JSON" | jq -r '.agentSpaces[0].agentSpaceId // empty' 2>/dev/null || echo "")
+fi
+
+NUM_SPACES=$(echo "$SPACES_JSON" | jq '.agentSpaces | length' 2>/dev/null || echo "0")
+FIRST_SPACE_ID=$(echo "$SPACES_JSON" | jq -r '.agentSpaces[0].agentSpaceId // empty' 2>/dev/null || echo "")
+FIRST_SPACE_NAME=$(echo "$SPACES_JSON" | jq -r '.agentSpaces[0].name // empty' 2>/dev/null || echo "")
+
+# Helper function to resolve space name or ID to an agentSpaceId
+resolve_space_id() {
+    local input="$1"
+    if [ -z "$input" ]; then
+        echo "$FIRST_SPACE_ID"
+        return
+    fi
+    local matched_id
+    matched_id=$(echo "$SPACES_JSON" | jq -r --arg val "$input" '.agentSpaces[]? | select((.name // "" | ascii_downcase) == ($val | ascii_downcase) or .agentSpaceId == $val) | .agentSpaceId' 2>/dev/null | head -n 1)
+    if [ -n "$matched_id" ] && [ "$matched_id" != "null" ]; then
+        echo "$matched_id"
+    else
+        echo "$input"
+    fi
+}
+
+USER_SPACE_INPUT="${AGENT_SPACE_ID:-${AGENT_SPACE_NAME:-}}"
+
+if [ "$NUM_SPACES" -gt 0 ] 2>/dev/null; then
+    echo -e "  Found active DevOps Agent Space(s) in ${TARGET_REGION}:"
+    echo "$SPACES_JSON" | jq -r '.agentSpaces[] | "    • \(.name)  (ID: \(.agentSpaceId))"'
 fi
 
 if [ "$NON_INTERACTIVE" = true ]; then
-    AGENT_SPACE_ID="${AGENT_SPACE_ID:-${DISCOVERED_SPACE:-default}}"
-    echo -e "  Using DevOps Agent Space ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
-else
-    if [ -n "$DISCOVERED_SPACE" ]; then
-        echo -e "  Found active DevOps Agent Space: ${GREEN}${DISCOVERED_SPACE}${NC}"
-        read -rp "Use this Agent Space ID? [Y/n]: " CONFIRM_SPACE
-        if [[ "$CONFIRM_SPACE" =~ ^[Nn] ]]; then
-            read -rp "Enter your AWS DevOps Agent Space ID: " USER_INPUT_SPACE
-            AGENT_SPACE_ID="${USER_INPUT_SPACE:-$DISCOVERED_SPACE}"
-        else
-            AGENT_SPACE_ID="$DISCOVERED_SPACE"
-        fi
+    if [ -n "$USER_SPACE_INPUT" ]; then
+        AGENT_SPACE_ID=$(resolve_space_id "$USER_SPACE_INPUT")
+        echo -e "  Resolved Space to ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
     else
-        DEFAULT_SPACE="${AGENT_SPACE_ID:-default}"
+        AGENT_SPACE_ID="${FIRST_SPACE_ID:-3f1e5f09-659d-4073-a7a5-2b5ca9e633bd}"
+        echo -e "  Using default discovered Agent Space ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
+    fi
+else
+    if [ -n "$FIRST_SPACE_ID" ]; then
+        DEFAULT_DISPLAY="${FIRST_SPACE_NAME:-$FIRST_SPACE_ID}"
+        echo -e "\n  You can enter either the ${BOLD}Space Name${NC} (e.g. '${FIRST_SPACE_NAME}') or the ${BOLD}Space ID${NC}."
+        read -rp "Enter Agent Space Name or Space ID [${DEFAULT_DISPLAY}]: " INPUT_SPACE
+        CHOSEN_SPACE="${INPUT_SPACE:-$DEFAULT_DISPLAY}"
+        AGENT_SPACE_ID=$(resolve_space_id "$CHOSEN_SPACE")
+        echo -e "  ${GREEN}✓ Using DevOps Agent Space ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
+    else
+        DEFAULT_SPACE="${USER_SPACE_INPUT:-3f1e5f09-659d-4073-a7a5-2b5ca9e633bd}"
         echo -e "  ${YELLOW}No DevOps Agent Space auto-detected via CLI.${NC}"
-        read -rp "Enter your AWS DevOps Agent Space ID [${DEFAULT_SPACE}]: " INPUT_SPACE
-        AGENT_SPACE_ID="${INPUT_SPACE:-$DEFAULT_SPACE}"
+        read -rp "Enter your AWS DevOps Agent Space Name or ID [${DEFAULT_SPACE}]: " INPUT_SPACE
+        CHOSEN_SPACE="${INPUT_SPACE:-$DEFAULT_SPACE}"
+        AGENT_SPACE_ID=$(resolve_space_id "$CHOSEN_SPACE")
+        echo -e "  ${GREEN}✓ Configured Agent Space ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
     fi
 fi
 
