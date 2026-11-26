@@ -1,0 +1,25 @@
+{
+  "version": "0",
+  "id": "22222222-3333-4444-5555-666666666666",
+  "detail-type": "Investigation In Progress",
+  "source": "aws.aidevops",
+  "account": "123456789012",
+  "time": "2026-11-26T12:02:30Z",
+  "region": "us-east-1",
+  "resources": [
+    "arn:aws:aidevops:us-east-1:123456789012:agentspace/aspc-0a1b2c3d4e5f6g7h8"
+  ],
+  "detail": {
+    "metadata": {
+      "agent_space_id": "aspc-0a1b2c3d4e5f6g7h8",
+      "task_id": "tsk-0987654321fedcba",
+      "execution_id": "ex-1234567890abcdef"
+    },
+    "data": {
+      "task_type": "INVESTIGATION",
+      "status": "IN_PROGRESS",
+      "phase": "Correlating CloudWatch Metrics and analyzing ECS task stderr logs",
+      "current_step": "Step 2 of 4: Anomaly timeline reconstruction"
+    }
+  }
+}

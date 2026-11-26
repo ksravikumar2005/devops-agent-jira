@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS DevOps Agent to Jira Cloud EventBridge Integration Stack.
+  Captures aws.aidevops investigation lifecycle events and synchronizes them to Jira Cloud issues.
+
+Parameters:
+  SecretName:
+    Type: String
+    Default: 'devops-agent/jira-credentials'
+    Description: Name of the AWS Secrets Manager secret storing Jira credentials (base URL, email, token, project key).
+
+  DynamoDBTableName:
+    Type: String
+    Default: 'devops-agent-jira-mappings'
+    Description: DynamoDB table name to store task_id to Jira issue key mappings.
+
+  AgentSpaceId:
+    Type: String
+    Default: 'default'
+    Description: AWS DevOps Agent Space ID for context and webhook triggers.
+
+  LogLevel:
+    Type: String
+    Default: 'INFO'
+    AllowedValues: ['DEBUG', 'INFO', 'WARNING', 'ERROR']
+    Description: Logging verbosity for the integration Lambda functions.
+
+Resources:
+  # ----------------------------------------------------------------------
+  # DynamoDB State Tracking Table
+  # ----------------------------------------------------------------------
+  DevOpsAgentJiraStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: taskId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: taskId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: App
+          Value: DevOpsAgentJiraIntegration
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ----------------------------------------------------------------------
+  # IAM Execution Role for Integration Lambda
+  # ----------------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-ExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource: !GetAtt DevOpsAgentJiraStateTable.Arn
+        - PolicyName: DevOpsAgentTelemetryAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aidevops:*
+                  - devops-agent:*
+                Resource: '*'
+        - PolicyName: EventBridgePublishAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: '*'
+
+  # ----------------------------------------------------------------------
+  # Lambda Function: EventBridge to Jira Outbound Integration
+  # ----------------------------------------------------------------------
+  DevOpsAgentJiraFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-EventHandler'
+      Description: Processes AWS DevOps Agent lifecycle events and creates/updates Jira issues.
+      Runtime: python3.12
+      Handler: event_handler.lambda_handler
+      MemorySize: 256
+      Timeout: 60
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref AWS::NoValue
+        S3Key: !Ref AWS::NoValue
+        ZipFile: |
+          # Placeholder code - will be updated during interactive deployment package upload
+          def lambda_handler(event, context):
+              import event_handler
+              return event_handler.lambda_handler(event, context)
+      Environment:
+        Variables:
+          JIRA_SECRET_NAME: !Ref SecretName
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          LOG_LEVEL: !Ref LogLevel
+      Tags:
+        - Key: App
+          Value: DevOpsAgentJiraIntegration
+
+  DevOpsAgentJiraLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${DevOpsAgentJiraFunction}'
+      RetentionInDays: 30
+
+  # ----------------------------------------------------------------------
+  # Amazon EventBridge Rule: Capture 'aws.aidevops' Investigation Events
+  # ----------------------------------------------------------------------
+  DevOpsAgentEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-InvestigationRule'
+      Description: Captures AWS DevOps Agent investigation lifecycle events and routes to Lambda.
+      EventPattern:
+        source:
+          - "aws.aidevops"
+        detail-type:
+          - prefix: "Investigation"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DevOpsAgentJiraFunction.Arn
+          Id: TargetJiraLambda
+
+  PermissionForEventBridgeToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DevOpsAgentJiraFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DevOpsAgentEventRule.Arn
+
+  # ----------------------------------------------------------------------
+  # Optional: Jira Webhook Inbound Receiver (Function URL)
+  # ----------------------------------------------------------------------
+  JiraWebhookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-WebhookReceiver'
+      Description: Inbound webhook receiver from Jira Cloud to trigger autonomous investigations.
+      Runtime: python3.12
+      Handler: webhook_receiver.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              import webhook_receiver
+              return webhook_receiver.lambda_handler(event, context)
+      Environment:
+        Variables:
+          AGENT_SPACE_ID: !Ref AgentSpaceId
+          LOG_LEVEL: !Ref LogLevel
+      Tags:
+        - Key: App
+          Value: DevOpsAgentJiraIntegration
+
+  JiraWebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${JiraWebhookFunction}'
+      RetentionInDays: 30
+
+  JiraWebhookFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt JiraWebhookFunction.Arn
+      Cors:
+        AllowMethods: ['POST', 'GET']
+        AllowOrigins: ['*']
+        AllowHeaders: ['*']
+
+  JiraWebhookFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt JiraWebhookFunction.Arn
+      FunctionUrlAuthType: NONE
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+
+Outputs:
+  DynamoDBTableName:
+    Description: DynamoDB table storing task_id to Jira issue key mappings.
+    Value: !Ref DevOpsAgentJiraStateTable
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTable'
+
+  LambdaFunctionArn:
+    Description: Event handler Lambda function ARN.
+    Value: !GetAtt DevOpsAgentJiraFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
+
+  EventBridgeRuleArn:
+    Description: EventBridge rule ARN filtering aws.aidevops events.
+    Value: !GetAtt DevOpsAgentEventRule.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RuleArn'
+
+  JiraWebhookUrl:
+    Description: Inbound Jira Webhook Function URL for incident trigger callbacks.
+    Value: !GetAtt JiraWebhookFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-WebhookUrl'

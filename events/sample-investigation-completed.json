@@ -1,0 +1,34 @@
+{
+  "version": "0",
+  "id": "33333333-4444-5555-6666-777777777777",
+  "detail-type": "Investigation Completed",
+  "source": "aws.aidevops",
+  "account": "123456789012",
+  "time": "2026-11-26T12:07:45Z",
+  "region": "us-east-1",
+  "resources": [
+    "arn:aws:aidevops:us-east-1:123456789012:agentspace/aspc-0a1b2c3d4e5f6g7h8"
+  ],
+  "detail": {
+    "metadata": {
+      "agent_space_id": "aspc-0a1b2c3d4e5f6g7h8",
+      "task_id": "tsk-0987654321fedcba",
+      "execution_id": "ex-1234567890abcdef"
+    },
+    "data": {
+      "task_type": "INVESTIGATION",
+      "status": "COMPLETED",
+      "root_cause": "Database connection pool exhaustion on rds-postgres-orders-prod triggered by a sudden surge in unindexed SELECT queries from checkout microservice deployment v2.4.1. CPU reached 99.4% and freeable memory dropped to 12MB.",
+      "affected_resources": [
+        "arn:aws:rds:us-east-1:123456789012:db:rds-postgres-orders-prod",
+        "arn:aws:ecs:us-east-1:123456789012:service/checkout-cluster/checkout-service",
+        "arn:aws:apigateway:us-east-1::/restapis/abc123xyz/stages/prod"
+      ],
+      "recommendations": [
+        "Roll back checkout-service deployment v2.4.1 to v2.4.0 or deploy hotfix adding index on orders(created_at, status).",
+        "Temporarily increase RDS max_connections parameter from 200 to 400 to relieve lock contention.",
+        "Enable Amazon RDS Proxy between ECS tasks and PostgreSQL database to enforce connection pooling."
+      ]
+    }
+  }
+}
