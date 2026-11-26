@@ -292,11 +292,26 @@ npx cdk deploy --context secretName="devops-agent/jira-credentials"
 
 ---
 
-## 🔄 Bi-directional Incident Management
+## ⚙️ Jira-Side Configuration Guide
 
-In addition to routing DevOps Agent findings **outbound** to Jira, this project supports **inbound** webhook triggers from Jira:
+To ensure your Atlassian Jira Cloud instance receives tickets and supports bidirectional investigation commands, perform the following setup steps:
 
-1. Copy the `JiraWebhookUrl` output from the CloudFormation stack:
+### 1. User Permissions
+Ensure your Atlassian user account (or service bot) has permissions in your target project (`KAN`):
+- **Browse Projects**: View project and issues.
+- **Create Issues**: Allows opening automated investigation tickets.
+- **Add Comments**: Allows posting root cause analysis (RCA) and diagnostic progress.
+- **Edit Issues**: Allows attaching labels (`aws-devops-agent`, `rca-completed`).
+
+### 2. Issue Types & Required Fields
+- **Team-managed projects** (Kanban/Scrum): Use issue type **`Task`** or **`Bug`** (the integration automatically detects this).
+- **Company-managed / ITSM projects**: Use **`Incident`**, **`Bug`**, or **`Task`**.
+- **Important**: In **Project settings > Issue types**, verify that custom fields (e.g. *Component*, *Version*, *Assignee*) are **NOT** marked as **Required** on the creation screen, as missing custom fields will cause Jira to reject automated API creation.
+
+### 3. Register Inbound Webhook (Bi-directional Incident Management)
+Enable engineers to trigger autonomous investigations directly from Jira:
+
+1. Obtain your `JiraWebhookUrl` output from CloudFormation:
    ```bash
    aws cloudformation describe-stacks \
      --stack-name devops-agent-jira-integration \
@@ -304,13 +319,26 @@ In addition to routing DevOps Agent findings **outbound** to Jira, this project 
      --output text
    ```
 2. In Jira Cloud:
-   - Navigate to **Jira Settings > System > Webhooks**.
-   - Click **Create a Webhook**.
-   - Set the URL to your `JiraWebhookUrl`.
-   - Under **Events**, select **Issue: Created** and **Comment: Created**.
-3. **Usage in Jira**:
-   - Comment `/investigate` on any existing Jira ticket to trigger an autonomous investigation in AWS.
-   - Or create an issue with the label `trigger-investigation` or `aws-devops-agent`.
+   - Click the gear icon (**Settings ⚙️**) in the top right header.
+   - Navigate to **System > Webhooks** (under Advanced).
+   - Click **+ Create a Webhook**.
+   - Configure:
+     - **Name**: `AWS DevOps Agent Integration`
+     - **Status**: `Enabled`
+     - **URL**: Paste your `JiraWebhookUrl`.
+     - **Issue related events**:
+       - Check **Issue**: `created`, `updated`
+       - Check **Comment**: `created`
+     - *(Optional JQL Filter)*: `project = "KAN"`
+   - Click **Save**.
+
+### 4. How Engineers Use It Inside Jira
+- **Comment Trigger**: Type `/investigate` on any existing Jira ticket to trigger an automated AWS DevOps Agent investigation.
+- **Label Trigger**: Apply the label `trigger-investigation` or `aws-devops-agent` to any issue.
+- **JQL Incident Dashboard**:
+  ```jql
+  project = "KAN" AND labels = "aws-devops-agent" ORDER BY created DESC
+  ```
 
 ---
 
