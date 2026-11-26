@@ -233,6 +233,13 @@ Follow the five sequenced steps below to configure, deploy, secure, and verify t
 ### Step 1: Set Up Atlassian Jira Cloud & API Credentials
 
 1. **Access Jira Cloud**: Sign in to your Atlassian site (e.g., `https://mycompany.atlassian.net`).
+   > [!TIP]
+   > You can copy your Jira Base URL directly from your browser's address bar:
+   >
+   > <p align="center">
+   >   <img src="docs/images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="650" />
+   > </p>
+
 2. **Designate a Project**: Identify your target Project Key (e.g., `KAN` or `OPS`).
 3. **Generate an Atlassian API Token**:
    - Navigate to **[Atlassian Security > API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
@@ -270,8 +277,49 @@ Follow the five sequenced steps below to configure, deploy, secure, and verify t
 ### Step 2: Set Up AWS DevOps Agent Space
 
 1. In the AWS Management Console, navigate to **AWS DevOps Agent** in your target region (e.g. `us-east-1`).
-2. Open **Agent spaces** and locate or create your space.
-3. Note either your **Agent Space Name** (e.g., `DevOpsSpace-Prod`) or your **Space ID UUID**:
+2. Open **Agent spaces** and click the **Create agent space** button:
+
+   <p align="center">
+     <img src="docs/images/create-agent-space.png" alt="Create Agent Space" width="700" />
+   </p>
+
+3. **Step 1 - Agent Space Properties**:
+   - **Agent space name**: Enter a name (e.g., `jira-integration` or `DevOpsSpace-Prod`).
+   - **Description**: Enter a description (e.g., `AWS DevOps Agent to Atlassian Jira Cloud Integration`).
+   - **Enable web app**: Select *Auto-create a new DevOps Agent role*.
+   - Click **Next**.
+
+   <p align="center">
+     <img src="docs/images/create-agent-space-1.png" alt="Agent Space Properties" width="700" />
+   </p>
+
+4. **Step 2 - Agent Scope**:
+   - **Account scope**: Select *Individual accounts* (or Organization scope if managing across AWS Organizations).
+   - **Primary account role**: Select *Auto-create a new DevOps Agent role*.
+   - Click **Next**.
+
+   <p align="center">
+     <img src="docs/images/create-agent-space-2.png" alt="Agent Scope" width="700" />
+   </p>
+
+5. **Step 3 - Additional Configuration (Optional)**:
+   - **Content safety guardrail**: Enabled by default to screen prompts and violations.
+   - **Encryption**: Keep *AWS owned key* (or select Customer managed KMS key).
+   - Click **Next**.
+
+   <p align="center">
+     <img src="docs/images/create-agent-space-3.png" alt="Additional Configuration" width="700" />
+   </p>
+
+6. **Step 4 - Review and Create**:
+   - Review your settings and click **Create agent space**.
+
+   <p align="center">
+     <img src="docs/images/create-agent-space-4.png" alt="Review and Create Agent Space" width="700" />
+   </p>
+
+7. **Locate your Agent Space Name or Space ID**:
+   Once created, you can use either your **Agent Space Name** (e.g., `jira-integration`) or your **Space ID UUID**:
    > [!TIP]
    > You can copy the Space ID (UUID format, e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`) directly from the console's top breadcrumb navigation:
    >
@@ -280,7 +328,7 @@ Follow the five sequenced steps below to configure, deploy, secure, and verify t
    > </p>
    > *(The setup script supports entering either the Space Name or the Space ID and automatically resolves names to the underlying ID).*
 
-4. *(Optional)* Under **Capability Providers**, you can enable the **Atlassian Remote MCP Server** (`https://mcp.atlassian.com/v2/mcp`) so the agent's AI reasoning loop can query Jira and Confluence runbooks during investigations.
+8. *(Optional)* Under **Capability Providers**, you can enable the **Atlassian Remote MCP Server** (`https://mcp.atlassian.com/v2/mcp`) so the agent's AI reasoning loop can query Jira and Confluence runbooks during investigations.
 
 ---
 
