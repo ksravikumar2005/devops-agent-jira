@@ -235,13 +235,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if "/investigate" in raw_text.lower():
             is_command = True
 
-    labels = fields.get("labels", [])
+    raw_labels = fields.get("labels", [])
+    normalized_labels = {str(l).lower().strip().replace("_", "-") for l in raw_labels} | {str(l).lower().strip() for l in raw_labels}
+    trigger_targets = {"trigger-investigation", "aws-devops-agent", "awsdevopsagent", "alert", "incident"}
+    has_trigger_label = bool(normalized_labels & trigger_targets)
+
     issue_type_name = fields.get("issuetype", {}).get("name", "").lower()
     priority_name = fields.get("priority", {}).get("name", "").lower()
-
-    has_trigger_label = any(lbl in ["trigger-investigation", "aws-devops-agent", "alert", "incident"] for lbl in labels)
     is_alert_type = issue_type_name in ["incident", "alert", "problem"]
     is_critical_priority = priority_name in ["highest", "critical", "p1", "blocker"]
+
+    logger.info(f"Trigger check for {issue_key}: is_command={is_command}, labels={raw_labels}, has_trigger_label={has_trigger_label}, issue_type={issue_type_name}, priority={priority_name}")
 
     # --------------------------------------------------------------------------
     # 3. Idempotency Check on Issue Updates
