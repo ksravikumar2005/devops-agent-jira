@@ -86,7 +86,11 @@ bash cloudshell-setup.sh
    > <p align="center">
    >   <img src="images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="600" />
    > </p>
-3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (do not worry about accidental trailing slashes like `https://mycompany.atlassian.net/` — the script and Lambda automatically strip them to prevent `//` path bugs).
+3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (you can copy the base domain directly from your browser's address bar up to `.atlassian.net`):
+   > <p align="center">
+   >   <img src="images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="600" />
+   > </p>
+   > *(Note: Accidental trailing slashes like `https://mycompany.atlassian.net/` are automatically sanitized and stripped to prevent `//` path bugs).*
 4. **Jira User Email**: Enter the email of the Jira administrator or service account.
 5. **Jira API Token**: Paste your API token (input is masked for security).
 6. **Jira Project Key**: Enter the key of the project where incident tickets should be created (e.g., `OPS`).

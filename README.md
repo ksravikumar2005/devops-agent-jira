@@ -188,8 +188,14 @@ curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
      >   <img src="docs/images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="650" />
      > </p>
    - Input your Jira URL (`https://mycompany.atlassian.net`), User Email, and API Token.
-     > [!NOTE]
-     > **Trailing Slashes**: Enter your URL without a trailing slash (e.g. `https://mycompany.atlassian.net`). If you accidentally include a trailing slash (`https://mycompany.atlassian.net/`), the setup script and Lambda integration automatically sanitize and strip it to prevent double-slash API path errors (`//rest/api/3/...`).
+     > [!TIP]
+     > **Copying Your Jira Base URL**: You can copy the base URL directly from your browser's address bar when signed into Jira (everything up to `.atlassian.net`):
+     >
+     > <p align="center">
+     >   <img src="docs/images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="650" />
+     > </p>
+     >
+     > *(Note: Accidental trailing slashes like `https://mycompany.atlassian.net/` are automatically sanitized and stripped by the setup script and Lambda integration to prevent double-slash API path errors).*
    - Specify your Jira Project Key (`OPS` or `KAN`) and Issue Type (`Incident` or `Task`).
    - Allow the script to run the live pre-flight check and synthetic test.
 
