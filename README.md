@@ -342,9 +342,14 @@ Follow the five sequenced steps below to configure, deploy, secure, and verify t
    cd devops-agent-jira
    bash cloudshell-setup.sh
    ```
+
+   <p align="center">
+     <img src="docs/images/cloudshell-setup.png" alt="CloudShell Setup Wizard Launch" width="700" />
+   </p>
+
 3. Follow the interactive prompts:
    - **Target Region**: Confirm `us-east-1`.
-   - **Agent Space**: Enter your Space Name or Space ID.
+   - **Agent Space**: Enter your Space Name or Space ID (e.g. `jira-integration`).
    - **Jira Base URL**: Enter `https://mycompany.atlassian.net` (trailing slashes are sanitized automatically).
      > <p align="center">
      >   <img src="docs/images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="650" />
@@ -352,6 +357,17 @@ Follow the five sequenced steps below to configure, deploy, secure, and verify t
    - **Email & Token**: Enter your Jira email and paste your API token.
    - **Project Key**: Enter `KAN`.
    - **Issue Type**: Automatically selects `Task` for team-managed projects.
+
+   <p align="center">
+     <img src="docs/images/cloudshell-setup-1.png" alt="CloudShell Interactive Setup & Verification" width="700" />
+   </p>
+
+4. **Automated Live Verification**:
+   The script prompts you to run live verification. Scenario 1 submits an actual investigation to AWS DevOps Agent, routes it to EventBridge, creates a live ticket in Jira (`KAN-5`), and prints your secured Webhook URL:
+
+   <p align="center">
+     <img src="docs/images/cloudshell-setup-2.png" alt="CloudShell Verification Success" width="700" />
+   </p>
 
 #### Option B: Headless Non-Interactive Mode (Zero Prompts)
 ```bash
@@ -393,6 +409,12 @@ To allow Jira to securely notify AWS DevOps Agent, register the secured webhook:
 
    echo -e "\nSecured Webhook URL:\n${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}\n"
    ```
+   *(You can also view the raw `JiraWebhookUrl` output directly in the AWS CloudFormation Console)*:
+
+   <p align="center">
+     <img src="docs/images/cloudformation-jira-webhook-1.png" alt="CloudFormation Outputs Tab JiraWebhookUrl" width="700" />
+   </p>
+
 2. In Atlassian Jira Cloud:
    - Click the gear icon (**Settings ⚙️**) in the top right header.
    - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
@@ -401,9 +423,19 @@ To allow Jira to securely notify AWS DevOps Agent, register the secured webhook:
      - **Name**: `AWS DevOps Agent Integration`
      - **Status**: `Enabled`
      - **URL**: Paste your full secured URL (including `?token=...`). Any request lacking this cryptographic token is rejected with **HTTP 403 Forbidden**.
+
+     <p align="center">
+       <img src="docs/images/jira-webhook-2.png" alt="Jira Webhook Configuration" width="700" />
+     </p>
+
      - **Issue related events**:
        - Check **Issue**: `created`, `updated`
-       - Check **Comment**: `created`
+       - Check **Comment**: `created` (and `updated`)
+
+     <p align="center">
+       <img src="docs/images/jira-webhook-3.png" alt="Jira Webhook Events Checklist" width="700" />
+     </p>
+
      - *(Optional JQL Filter)*: `project = "KAN"`
    - Scroll to the bottom of the page and click **Create**.
 
@@ -420,6 +452,13 @@ bash scripts/create-real-investigation.sh \
   "Investigate High Latency Anomaly on Checkout API" \
   "CloudWatch metrics indicate elevated p99 latency exceeding 4500ms on ALB target group."
 ```
+
+You can view the active investigation in your **AWS DevOps Agent Incident Response Dashboard**:
+
+<p align="center">
+  <img src="docs/images/investigation-devops-agent-1.png" alt="AWS DevOps Agent Incident Response Dashboard" width="700" />
+</p>
+
 * **Observed in Jira**:
   1. A new incident ticket is automatically created in project `KAN`.
   2. Diagnostic journal updates stream into ticket comments.
