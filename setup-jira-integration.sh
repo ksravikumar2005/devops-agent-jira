@@ -455,7 +455,7 @@ if [[ "$RUN_TEST" = true ]] || [[ "$RUN_TEST" =~ ^[Yy] ]]; then
     cat << EOF > "$TEST_ENTRY_FILE"
 [
   {
-    "Source": "aws.aidevops",
+    "Source": "custom.aidevops",
     "DetailType": "Investigation Created",
     "Detail": $(echo "$TEST_EVENT_JSON" | jq -c '.detail' | jq -R .),
     "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]
@@ -518,7 +518,7 @@ EOF
         cat << EOF > "$COMP_ENTRY_FILE"
 [
   {
-    "Source": "aws.aidevops",
+    "Source": "custom.aidevops",
     "DetailType": "Investigation Completed",
     "Detail": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .),
     "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]

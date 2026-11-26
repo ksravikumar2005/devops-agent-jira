@@ -19,6 +19,13 @@ TASK_ID="tsk-synthetic-$(date +%s)"
 EXEC_ID="ex-synthetic-$(date +%s)"
 SPACE_ID="aspc-default-demo"
 
+# Support --direct flag to test Lambda directly without EventBridge
+DIRECT_MODE=false
+if [[ "$*" == *"--direct"* ]]; then
+    DIRECT_MODE=true
+    echo "Running in DIRECT Lambda invocation mode."
+fi
+
 echo -e "\n[1/3] Emitting 'Investigation Created'..."
 CREATED_DETAIL=$(jq -n \
   --arg task "$TASK_ID" \
@@ -38,11 +45,37 @@ CREATED_DETAIL=$(jq -n \
     }
   }')
 
-ENTRY_FILE="/tmp/test-eb-$$.json"
-cat << EOF > "$ENTRY_FILE"
+if [ "$DIRECT_MODE" = true ]; then
+    EVENT_PAYLOAD=$(jq -n \
+      --arg task "$TASK_ID" \
+      --arg exec "$EXEC_ID" \
+      --arg space "$SPACE_ID" \
+      --arg region "$REGION" \
+      --arg acct "$ACCOUNT_ID" \
+      --argjson detail "$CREATED_DETAIL" \
+      '{
+        version: "0",
+        id: "direct-test-1",
+        "detail-type": "Investigation Created",
+        source: "custom.aidevops",
+        account: $acct,
+        time: (now | todateiso8601),
+        region: $region,
+        resources: [("arn:aws:aidevops:" + $region + ":" + $acct + ":agentspace/" + $space)],
+        detail: $detail
+      }')
+    aws lambda invoke \
+      --function-name "devops-agent-jira-integration-EventHandler" \
+      --payload "$(echo "$EVENT_PAYLOAD" | base64)" \
+      --region "$REGION" /tmp/lambda-out-1.json > /dev/null
+    cat /tmp/lambda-out-1.json && echo ""
+    rm -f /tmp/lambda-out-1.json
+else
+    ENTRY_FILE="/tmp/test-eb-$$.json"
+    cat << EOF > "$ENTRY_FILE"
 [
   {
-    "Source": "aws.aidevops",
+    "Source": "custom.aidevops",
     "DetailType": "Investigation Created",
     "Detail": $(echo "$CREATED_DETAIL" | jq -c . | jq -R .),
     "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
@@ -50,12 +83,13 @@ cat << EOF > "$ENTRY_FILE"
 ]
 EOF
 
-aws events put-events --entries "file://${ENTRY_FILE}" --region "$REGION" > /dev/null
-rm -f "$ENTRY_FILE"
+    aws events put-events --entries "file://${ENTRY_FILE}" --region "$REGION"
+    rm -f "$ENTRY_FILE"
+fi
 
 echo "Sent Investigation Created event for Task: ${TASK_ID}"
-echo "Sleeping 10 seconds for Jira issue creation and Lambda execution..."
-sleep 10
+echo "Waiting 6 seconds for Jira issue creation..."
+sleep 6
 
 echo -e "\n[2/3] Emitting 'Investigation In Progress'..."
 PROGRESS_DETAIL=$(jq -n \
@@ -75,11 +109,35 @@ PROGRESS_DETAIL=$(jq -n \
     }
   }')
 
-PROG_ENTRY="/tmp/test-prog-$$.json"
-cat << EOF > "$PROG_ENTRY"
+if [ "$DIRECT_MODE" = true ]; then
+    EVENT_PAYLOAD_2=$(jq -n \
+      --arg task "$TASK_ID" \
+      --arg exec "$EXEC_ID" \
+      --arg space "$SPACE_ID" \
+      --arg region "$REGION" \
+      --arg acct "$ACCOUNT_ID" \
+      --argjson detail "$PROGRESS_DETAIL" \
+      '{
+        version: "0",
+        id: "direct-test-2",
+        "detail-type": "Investigation In Progress",
+        source: "custom.aidevops",
+        account: $acct,
+        time: (now | todateiso8601),
+        region: $region,
+        detail: $detail
+      }')
+    aws lambda invoke \
+      --function-name "devops-agent-jira-integration-EventHandler" \
+      --payload "$(echo "$EVENT_PAYLOAD_2" | base64)" \
+      --region "$REGION" /tmp/lambda-out-2.json > /dev/null
+    rm -f /tmp/lambda-out-2.json
+else
+    PROG_ENTRY="/tmp/test-prog-$$.json"
+    cat << EOF > "$PROG_ENTRY"
 [
   {
-    "Source": "aws.aidevops",
+    "Source": "custom.aidevops",
     "DetailType": "Investigation In Progress",
     "Detail": $(echo "$PROGRESS_DETAIL" | jq -c . | jq -R .),
     "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
@@ -87,8 +145,9 @@ cat << EOF > "$PROG_ENTRY"
 ]
 EOF
 
-aws events put-events --entries "file://${PROG_ENTRY}" --region "$REGION" > /dev/null
-rm -f "$PROG_ENTRY"
+    aws events put-events --entries "file://${PROG_ENTRY}" --region "$REGION"
+    rm -f "$PROG_ENTRY"
+fi
 
 echo "Sent Investigation In Progress event."
 sleep 4
@@ -119,11 +178,35 @@ COMPLETED_DETAIL=$(jq -n \
     }
   }')
 
-COMP_ENTRY="/tmp/test-comp-$$.json"
-cat << EOF > "$COMP_ENTRY"
+if [ "$DIRECT_MODE" = true ]; then
+    EVENT_PAYLOAD_3=$(jq -n \
+      --arg task "$TASK_ID" \
+      --arg exec "$EXEC_ID" \
+      --arg space "$SPACE_ID" \
+      --arg region "$REGION" \
+      --arg acct "$ACCOUNT_ID" \
+      --argjson detail "$COMPLETED_DETAIL" \
+      '{
+        version: "0",
+        id: "direct-test-3",
+        "detail-type": "Investigation Completed",
+        source: "custom.aidevops",
+        account: $acct,
+        time: (now | todateiso8601),
+        region: $region,
+        detail: $detail
+      }')
+    aws lambda invoke \
+      --function-name "devops-agent-jira-integration-EventHandler" \
+      --payload "$(echo "$EVENT_PAYLOAD_3" | base64)" \
+      --region "$REGION" /tmp/lambda-out-3.json > /dev/null
+    rm -f /tmp/lambda-out-3.json
+else
+    COMP_ENTRY="/tmp/test-comp-$$.json"
+    cat << EOF > "$COMP_ENTRY"
 [
   {
-    "Source": "aws.aidevops",
+    "Source": "custom.aidevops",
     "DetailType": "Investigation Completed",
     "Detail": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .),
     "Resources": ["arn:aws:aidevops:${REGION}:${ACCOUNT_ID}:agentspace/${SPACE_ID}"]
@@ -131,8 +214,9 @@ cat << EOF > "$COMP_ENTRY"
 ]
 EOF
 
-aws events put-events --entries "file://${COMP_ENTRY}" --region "$REGION" > /dev/null
-rm -f "$COMP_ENTRY"
+    aws events put-events --entries "file://${COMP_ENTRY}" --region "$REGION"
+    rm -f "$COMP_ENTRY"
+fi
 
 echo "Sent Investigation Completed event."
 echo "Waiting 5 seconds for final RCA comment publishing..."

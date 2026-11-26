@@ -153,6 +153,8 @@ Resources:
       EventPattern:
         source:
           - "aws.aidevops"
+          - "custom.aidevops"
+          - "devops.agent.test"
         detail-type:
           - prefix: "Investigation"
       State: ENABLED
