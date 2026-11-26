@@ -312,10 +312,15 @@ while [ "$JIRA_VALID" = false ]; do
             AVAILABLE_TYPES=$(echo "$PROJ_JSON" | jq -r '.issueTypes[]? | select(.subtask==false) | .name' 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
             echo -e "  Available Issue Types in ${JIRA_PROJECT}: ${CYAN}${AVAILABLE_TYPES}${NC}"
             
-            # Check if selected issue type exists; if not, auto-fallback to Task or first valid
+            # Check if selected issue type exists; if not, auto-fallback to Task, Bug, or first valid
             if ! echo "$AVAILABLE_TYPES" | grep -iq "\b${JIRA_ISSUE_TYPE}\b"; then
-                FIRST_VALID=$(echo "$AVAILABLE_TYPES" | awk '{print $1}')
-                DEFAULT_FALLBACK="${FIRST_VALID:-Task}"
+                if echo "$AVAILABLE_TYPES" | grep -iq "\bTask\b"; then
+                    DEFAULT_FALLBACK="Task"
+                elif echo "$AVAILABLE_TYPES" | grep -iq "\bBug\b"; then
+                    DEFAULT_FALLBACK="Bug"
+                else
+                    DEFAULT_FALLBACK=$(echo "$AVAILABLE_TYPES" | awk '{print $1}')
+                fi
                 echo -e "  ${YELLOW}Notice: Issue type '${JIRA_ISSUE_TYPE}' is not enabled in project ${JIRA_PROJECT}.${NC}"
                 echo -e "  ${GREEN}✓ Auto-selected '${DEFAULT_FALLBACK}' as the active issue type.${NC}"
                 JIRA_ISSUE_TYPE="$DEFAULT_FALLBACK"
