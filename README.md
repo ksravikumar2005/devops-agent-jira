@@ -126,6 +126,23 @@ If deploying from your local workstation instead of AWS CloudShell:
 
 ---
 
+### 🔑 Generating your Atlassian API Token
+
+1. Navigate to **[Atlassian Security > API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
+2. Click **Create API token** *(choose the standard option, not "with scopes", so it inherits basic auth permissions)*.
+3. In the creation dialog:
+   - **Name**: Enter a descriptive name such as `aws_devops_agent`.
+   - **Expires on**: Choose an expiration date (tokens can last up to 1 year).
+
+<p align="center">
+  <img src="docs/images/create-jira-api-token.png" alt="Create Atlassian API Token" width="550" />
+</p>
+
+4. Click **Create**.
+5. **Copy the token immediately**: Store it securely. You will paste this token into the CloudShell interactive setup script.
+
+---
+
 ### Method A: Interactive AWS CloudShell (Recommended)
 
 1. Open AWS CloudShell in your browser.

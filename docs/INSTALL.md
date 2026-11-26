@@ -26,11 +26,18 @@ Before beginning deployment, ensure you have the following:
 
 ## 2. Generating an Atlassian API Token
 
-1. Log in to **[Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
-2. Click **Create API token**.
-3. Label your token (e.g., `aws-devops-agent-integration`).
-4. Click **Create** and immediately copy the token.
-5. Store it securely; Atlassian will not show it again.
+1. Log in to **[Atlassian Security > API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
+2. Click **Create API token** *(choose the standard option, not "with scopes", so it inherits basic auth permissions)*.
+3. In the creation modal:
+   - **Name**: Enter `aws_devops_agent`.
+   - **Expires on**: Select your preferred expiration date (up to 1 year).
+
+<p align="center">
+  <img src="images/create-jira-api-token.png" alt="Create Atlassian API Token" width="550" />
+</p>
+
+4. Click **Create**.
+5. Copy and store the generated token immediately; Atlassian will not display it again. You will paste this token into the CloudShell setup wizard.
 
 ---
 
