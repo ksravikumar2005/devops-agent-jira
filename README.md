@@ -181,6 +181,12 @@ curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
 4. Follow the interactive prompts:
    - Confirm your target AWS Region.
    - Choose or enter your AWS DevOps Agent Space ID.
+     > [!TIP]
+     > **Locating Your Agent Space ID**: In the AWS Console, open **AWS DevOps Agent > Agent spaces** and click on your space. You can copy the Space ID (UUID format, e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`) directly from the console's top breadcrumb navigation:
+     >
+     > <p align="center">
+     >   <img src="docs/images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="650" />
+     > </p>
    - Input your Jira URL (`https://mycompany.atlassian.net`), User Email, and API Token.
      > [!NOTE]
      > **Trailing Slashes**: Enter your URL without a trailing slash (e.g. `https://mycompany.atlassian.net`). If you accidentally include a trailing slash (`https://mycompany.atlassian.net/`), the setup script and Lambda integration automatically sanitize and strip it to prevent double-slash API path errors (`//rest/api/3/...`).

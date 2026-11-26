@@ -80,7 +80,12 @@ bash cloudshell-setup.sh
 
 ### Step 3.4: Follow the Interactive Prompts
 1. **Target Region**: Confirm your AWS region (default: current region).
-2. **Agent Space ID**: The wizard attempts to discover your Agent Space using `aws aidevops list-agent-spaces`. If found, press `Enter` to use it, or enter your custom Space ID.
+2. **Agent Space ID**: The wizard attempts to discover your Agent Space using `aws aidevops list-agent-spaces`. If found, press `Enter` to use it, or copy/paste your Space ID.
+   > **Tip**: You can copy your Agent Space ID (e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`) directly from the AWS Console top breadcrumb navigation under **AWS DevOps Agent > Agent spaces > Agent space: [ID]**:
+   >
+   > <p align="center">
+   >   <img src="images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="600" />
+   > </p>
 3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (do not worry about accidental trailing slashes like `https://mycompany.atlassian.net/` — the script and Lambda automatically strip them to prevent `//` path bugs).
 4. **Jira User Email**: Enter the email of the Jira administrator or service account.
 5. **Jira API Token**: Paste your API token (input is masked for security).
