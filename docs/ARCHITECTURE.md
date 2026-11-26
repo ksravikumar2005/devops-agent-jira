@@ -171,7 +171,66 @@ Billing Mode: `PAY_PER_REQUEST` (On-Demand)
 
 ---
 
-## 4. Security & Encryption Standards
+## 4. Idempotency Architecture & Duplicate Ticket Prevention
+
+To operate safely at enterprise scale without creating duplicate tickets or infinite event loops, this solution enforces **four layers of strict idempotency guards**:
+
+```mermaid
+flowchart TD
+    subgraph Outbound["1. Outbound: EventBridge ➔ Jira"]
+        E1[EventBridge 'Investigation Created' Arrives] --> D1{Is taskId in DynamoDB?}
+        D1 -- Yes: Already Mapped --> S1[Exit: Skip Duplicate Issue Creation]
+        D1 -- No: New Task --> C1[Create Jira Ticket KAN-X]
+        C1 --> W1[Save taskId ↔ KAN-X in DynamoDB]
+    end
+
+    subgraph Inbound["2. Inbound: Jira ➔ AWS DevOps Agent"]
+        J1[Jira Webhook 'issue_updated' Arrives] --> D2{Is JIRA#KAN-X active in DynamoDB?}
+        D2 -- Yes & no /investigate command --> S2[Exit: Ignore Routine Field Edit]
+        D2 -- No or explicit /investigate --> C2[Launch Investigation Task]
+        C2 --> W2[Save JIRA#KAN-X as IN_PROGRESS in DynamoDB]
+    end
+
+    subgraph Echo["3. Echo Loop Prevention (Ping-Pong Guard)"]
+        J3[Ticket created in Jira] --> A1[Webhook creates task tsk-123 & writes mapping to DynamoDB]
+        A1 --> B1[DevOps Agent natively emits 'Investigation Created' to EventBridge]
+        B1 --> D3{EventHandler checks DynamoDB for tsk-123}
+        D3 -- Found: Originated from Jira --> S3[Skip: Do NOT create duplicate Jira ticket]
+    end
+```
+
+### 1. Outbound Event Deduplication (EventBridge At-Least-Once Delivery)
+Amazon EventBridge guarantees **at-least-once** delivery, meaning network retries could theoretically deliver duplicate `Investigation Created` events for the same task.
+* **Mechanism**: When `Investigation Created` arrives at `event_handler.py`, the Lambda queries DynamoDB for `taskId`.
+* **Guard**: If a mapping record already exists for that `taskId`, Lambda logs `Idempotency Guard: Task already mapped to Jira issue. Skipping duplicate creation.` and immediately exits without calling Jira API.
+
+### 2. Duplicate RCA Comment Prevention
+When an investigation finishes, EventBridge delivers `Investigation Completed`.
+* **Mechanism**: Lambda checks if the DynamoDB state is already `COMPLETED`.
+* **Guard**: If `status == "COMPLETED"`, Lambda skips comment creation, preventing duplicate RCA comments from being posted if EventBridge retries delivery.
+
+### 3. Inbound Jira Update Deduplication (Routine Edits vs. New Alerts)
+In Jira, engineers frequently edit tickets (re-assigning teammates, changing priority, dragging cards across Kanban columns, or writing standard comments). Each action sends a `jira:issue_updated` webhook event.
+* **Mechanism**: DynamoDB stores a reverse state record: `taskId = "JIRA#" + issue_key`.
+* **Guard**: When `jira:issue_updated` arrives at `webhook_receiver.py`, it inspects `JIRA#{issue_key}`. If an active investigation (`IN_PROGRESS` or `INVESTIGATION_QUEUED`) is already running for this ticket, it suppresses duplicate task creation (`HTTP 200 {"status": "already_active"}`).
+* **Override**: Only an explicit slash command (`/investigate`) overrides this to re-run an investigation on demand.
+
+### 4. The "Ping-Pong" Echo Loop Guard (Bidirectional Loop Prevention)
+Without state tracking, a bidirectional integration could enter an infinite loop:
+> Jira creates a ticket ➔ Webhook triggers DevOps Agent ➔ DevOps Agent emits EventBridge event ➔ EventHandler creates *another* Jira ticket ➔ That triggers another webhook...
+
+**How the loop is broken**:
+1. When a Jira ticket triggers an investigation, `webhook_receiver.py` writes `taskId ➔ issue_key` into DynamoDB **before** the agent starts.
+2. When AWS DevOps Agent begins and publishes its native `Investigation Created` event to EventBridge, `event_handler.py` picks it up and checks DynamoDB.
+3. It finds that `taskId` is **already mapped** to the Jira ticket that initiated it.
+4. It skips ticket creation entirely, breaking the loop!
+
+### 5. AWS API Client-Token Idempotency
+When `webhook_receiver.py` dispatches `create_backlog_task` to the AWS DevOps Agent API, it provides a deterministic client token (`clientToken=f"jira-{issue_key}-{timestamp}"`). This ensures that even if AWS API calls are retried over unstable networks, AWS DevOps Agent will never spawn duplicate backlog tasks.
+
+---
+
+## 5. Security & Encryption Standards
 
 1. **Secrets at Rest**: Stored in AWS Secrets Manager, encrypted with AWS KMS. Secret strings are never printed in CloudWatch logs.
 2. **Secrets in Transit**: Encrypted over HTTPS using TLS 1.3 to Jira Cloud REST API endpoints.

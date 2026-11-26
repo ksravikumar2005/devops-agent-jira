@@ -116,6 +116,15 @@ sequenceDiagram
 | **Security Layer** | **AWS Secrets Manager** | Encrypts Jira Base URL, Admin Email, API Token, and project keys with KMS. |
 | **Bi-directional Webhook** | **Lambda Function URL** | Enables Jira Cloud webhooks (e.g. `/investigate` comment or manual incident assignment) to trigger autonomous investigations. |
 
+### 🛡️ Idempotency & Duplicate Prevention Architecture
+
+To prevent duplicate tickets, redundant comments, or infinite ping-pong loops, the architecture enforces **four layers of strict idempotency guards** backed by Amazon DynamoDB:
+
+1. **Outbound Event Deduplication**: When EventBridge delivers `Investigation Created`, Lambda first checks DynamoDB for `taskId`. If a record already exists (e.g. from an EventBridge retry or an investigation that originated from Jira), Lambda aborts immediately without calling Jira.
+2. **Duplicate RCA Protection**: When `Investigation Completed` arrives, Lambda checks if DynamoDB status is already `COMPLETED`. If so, it skips posting duplicate RCA comments.
+3. **Inbound Jira Update Deduplication**: When an engineer performs routine edits on a Jira ticket (changing assignees, modifying descriptions, or moving cards on a Kanban board), the webhook checks DynamoDB for an active investigation (`JIRA#{issue_key}`). Routine field updates are safely acknowledged without spawning duplicate tasks.
+4. **Echo / Ping-Pong Loop Prevention**: When an investigation is triggered from Jira, the webhook registers `taskId ↔ issue_key` in DynamoDB *before* DevOps Agent starts. When DevOps Agent emits its native `Investigation Created` event to EventBridge, the Event Handler Lambda finds the existing mapping and skips creating a duplicate ticket!
+
 ---
 
 ## 📦 What's Getting Deployed
