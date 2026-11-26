@@ -4,11 +4,11 @@ This guide details the complete walkthrough for installing, configuring, and ver
 
 ---
 
-## 1. Prerequisites Checklist
+## 📋 Prerequisites Checklist
 
 Before beginning deployment, ensure you have the following:
 
-- [ ] **AWS CloudShell Access**: Login to your AWS Management Console and launch CloudShell in your target region (e.g. `us-east-1` or `us-west-2`).
+- [ ] **AWS CloudShell Access**: Login to your AWS Management Console and launch CloudShell in your target region (e.g. `us-east-1`).
 - [ ] **IAM Permissions**: Permission to create and manage:
   - AWS CloudFormation Stacks (`cloudformation:*`)
   - AWS Lambda Functions & Function URLs (`lambda:*`)
@@ -19,186 +19,256 @@ Before beginning deployment, ensure you have the following:
 - [ ] **AWS DevOps Agent Space**: An active DevOps Agent Space in your region.
 - [ ] **Atlassian Jira Cloud Account**:
   - Admin access to Atlassian Jira Cloud.
-  - A designated project (e.g., `OPS`, `INC`, or `ITSM`).
+  - A designated project (e.g., `KAN`, `OPS`, or `ITSM`).
   - An Atlassian Cloud API Token for authentication.
 
 ---
 
-## 2. Generating an Atlassian API Token
+## Step 1: Set Up Atlassian Jira Cloud & API Credentials
 
-1. Log in to **[Atlassian Security > API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
-2. Click **Create API token** *(choose the standard option, not "with scopes", so it inherits basic auth permissions)*.
-3. In the creation modal:
+1. **Access Jira Cloud**: Sign in to your Atlassian site (e.g., `https://aws-devops-agent.atlassian.net`).
+   > [!TIP]
+   > You can copy your Jira Base URL directly from your browser's address bar:
+   >
+   > <p align="center">
+   >   <img src="images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="650" />
+   > </p>
+
+2. **Designate a Project**: Identify your target Project Key (e.g., `KAN`).
+3. **Generate an Atlassian API Token**:
+   - Log in to **[Atlassian Security > API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens)**.
+   - Click **Create API token** *(choose the standard option, not "with scopes", so it inherits basic auth permissions)*.
    - **Name**: Enter `aws_devops_agent`.
    - **Expires on**: Select your preferred expiration date (up to 1 year).
 
+   <p align="center">
+     <img src="images/create-jira-api-token.png" alt="Create Atlassian API Token" width="550" />
+   </p>
+
+   - Click **Create**.
+   - Copy and store the generated token immediately.
+
+4. **Verify Connectivity (Pre-Flight Check)**:
+   Run these curl checks from CloudShell or your terminal to verify API authentication and project permissions:
+   ```bash
+   # Verify authentication
+   curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+     -H "Accept: application/json" \
+     "https://mycompany.atlassian.net/rest/api/3/myself"
+
+   # Verify project access
+   curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
+     -H "Accept: application/json" \
+     "https://mycompany.atlassian.net/rest/api/3/project/KAN"
+   ```
+
+5. **Issue Types & Permissions**:
+   - **Team-managed projects**: Use issue type **`Task`** or **`Bug`** (the integration auto-detects this).
+   - **Company-managed / ITSM projects**: Use **`Incident`**, **`Bug`**, or **`Task`**.
+   - Ensure custom fields are not marked as strictly *Required* on the issue creation screen.
+
+---
+
+## Step 2: Set Up AWS DevOps Agent Space
+
+1. In the AWS Management Console, navigate to **AWS DevOps Agent** in your target region (e.g. `us-east-1`).
+2. Open **Agent spaces** and click the **Create agent space** button:
+
+   <p align="center">
+     <img src="images/create-agent-space.png" alt="Create Agent Space" width="700" />
+   </p>
+
+3. **Step 1 - Agent Space Properties**:
+   - **Agent space name**: Enter a name (e.g., `jira-integration` or `DevOpsSpace-Prod`).
+   - **Description**: Enter a description (e.g., `AWS DevOps Agent to Atlassian Jira Cloud Integration`).
+   - **Enable web app**: Select *Auto-create a new DevOps Agent role*.
+   - Click **Next**.
+
+   <p align="center">
+     <img src="images/create-agent-space-1.png" alt="Agent Space Properties" width="700" />
+   </p>
+
+4. **Step 2 - Agent Scope**:
+   - **Account scope**: Select *Individual accounts* (or Organization scope if managing across AWS Organizations).
+   - **Primary account role**: Select *Auto-create a new DevOps Agent role*.
+   - Click **Next**.
+
+   <p align="center">
+     <img src="images/create-agent-space-2.png" alt="Agent Scope" width="700" />
+   </p>
+
+5. **Step 3 - Additional Configuration (Optional)**:
+   - **Content safety guardrail**: Enabled by default to screen prompts and violations.
+   - **Encryption**: Keep *AWS owned key* (or select Customer managed KMS key).
+   - Click **Next**.
+
+   <p align="center">
+     <img src="images/create-agent-space-3.png" alt="Additional Configuration" width="700" />
+   </p>
+
+6. **Step 4 - Review and Create**:
+   - Review your settings and click **Create agent space**.
+
+   <p align="center">
+     <img src="images/create-agent-space-4.png" alt="Review and Create Agent Space" width="700" />
+   </p>
+
+7. **Locate your Agent Space Name or Space ID**:
+   Once created, you can use either your **Agent Space Name** (e.g., `jira-integration`) or your **Space ID UUID**:
+   > [!TIP]
+   > You can copy the Space ID (UUID format, e.g. `072535e6-319a-4b35-a9c4-57607fca96ee`) directly from the console's top breadcrumb navigation:
+   >
+   > <p align="center">
+   >   <img src="images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="650" />
+   > </p>
+   > *(The setup script supports entering either the Space Name or the Space ID and automatically resolves names to the underlying ID).*
+
+---
+
+## Step 3: Deploy via AWS CloudShell
+
+### 3.1: Launch CloudShell & Run Setup
+1. Open the [AWS Management Console](https://console.aws.amazon.com/) in your target region (`us-east-1`).
+2. Click the **CloudShell icon** (`>_`) in the top navigation bar.
+3. Clone the repository and execute the setup wizard:
+   ```bash
+   git clone https://github.com/ksravikumar2005/devops-agent-jira.git
+   cd devops-agent-jira
+   bash cloudshell-setup.sh
+   ```
+
+   <p align="center">
+     <img src="images/cloudshell-setup.png" alt="CloudShell Setup Wizard Launch" width="700" />
+   </p>
+
+### 3.2: Follow the Interactive Prompts
+1. **Target Region**: Confirm your AWS region (`us-east-1`).
+2. **Agent Space**: Enter your Space Name (`jira-integration`) or Space ID.
+3. **Jira Base URL**: Enter your Atlassian Cloud domain (e.g., `https://aws-devops-agent.atlassian.net`).
+4. **Jira User Email**: Enter your Atlassian login email (`admin@mycompany.com`).
+5. **Jira API Token**: Paste your generated Atlassian API token.
+6. **Jira Project Key**: Enter your target project key (`KAN`).
+7. **Jira Issue Type**: The script detects available types (`Epic`, `Task`, `Story`, `Feature`, `Bug`) and automatically selects `Task` for team-managed projects.
+
+   <p align="center">
+     <img src="images/cloudshell-setup-1.png" alt="CloudShell Interactive Setup & Verification" width="700" />
+   </p>
+
+### 3.3: Automated Live Verification
+At the end of deployment, the wizard presents verification options:
+- Select **1** to run **Outbound Flow**: Triggers a real investigation in AWS DevOps Agent, routes it to EventBridge, creates a live ticket in Jira (`KAN-5`), and outputs your secured Webhook URL!
+
+   <p align="center">
+     <img src="images/cloudshell-setup-2.png" alt="CloudShell Verification Success" width="700" />
+   </p>
+
+---
+
+## Step 4: Register Secured Webhook in Jira Cloud
+
+To allow Jira to securely notify AWS DevOps Agent, register the secured webhook:
+
+### 4.1: Retrieve the Secured Webhook URL
+```bash
+WEBHOOK_URL=$(aws cloudformation describe-stacks \
+  --stack-name devops-agent-jira-integration \
+  --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
+  --output text)
+
+WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
+  --secret-id "devops-agent/jira-credentials" \
+  --query "SecretString" --output text | jq -r '.webhook_secret_token')
+
+echo -e "\nSecured Webhook URL:\n${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}\n"
+```
+
+*(You can also verify the raw `JiraWebhookUrl` output directly in the AWS CloudFormation Console)*:
+
 <p align="center">
-  <img src="images/create-jira-api-token.png" alt="Create Atlassian API Token" width="550" />
+  <img src="images/cloudformation-jira-webhook-1.png" alt="CloudFormation Outputs Tab JiraWebhookUrl" width="700" />
 </p>
 
-4. Click **Create**.
-5. Copy and store the generated token immediately; Atlassian will not display it again. You will paste this token into the CloudShell setup wizard.
+### 4.2: Register the Webhook in Jira
+1. In Jira, click the **Settings icon** (gear ⚙️ in the top right header).
+2. Click **System**.
+3. In the left sidebar, scroll down to **Advanced** and click **Webhooks**.
+4. Click **+ Create a Webhook** (top right).
+5. Configure the webhook settings:
+   - **Name**: `AWS DevOps Agent Integration`
+   - **Status**: `Enabled`
+   - **URL**: Paste your **Secured Webhook URL** (including the `?token=...` parameter).
+   - **Secret**: Leave blank (*"Leave blank for no secret"*, as the cryptographic token in the URL authenticates the payload).
+
+   <p align="center">
+     <img src="images/jira-webhook-2.png" alt="Jira Webhook Configuration" width="700" />
+   </p>
+
+   - **Issue related events**:
+     - Check **Issue**: `created`, `updated`
+     - Check **Comment**: `created` (and `updated`)
+
+   <p align="center">
+     <img src="images/jira-webhook-3.png" alt="Jira Webhook Events Checklist" width="700" />
+   </p>
+
+   - *(Optional JQL Filter)*: Restrict events to your project:
+     ```jql
+     project = "KAN"
+     ```
+6. Scroll to the bottom of the page and click **Create**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
 
 ---
 
-## 3. Verifying Your Jira API Key (Pre-Flight Check)
+## Step 5: Live Verification & Testing
 
-Before running the deployment wizard, you can verify your credentials directly using `curl`:
+Verify both directions of the incident management lifecycle:
 
+### Scenario 1: Outbound Flow (AWS DevOps Agent ➡️ Jira)
+Trigger a real autonomous investigation from CloudShell using the official AWS CLI:
 ```bash
-# Verify authentication
-curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
-  -H "Accept: application/json" \
-  "https://YOUR_ORG.atlassian.net/rest/api/3/myself"
-
-# Verify project access
-curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
-  -H "Accept: application/json" \
-  "https://YOUR_ORG.atlassian.net/rest/api/3/project/YOUR_PROJECT_KEY"
+bash scripts/create-real-investigation.sh \
+  "Investigate High Latency Anomaly on Checkout API" \
+  "CloudWatch metrics indicate elevated p99 latency exceeding 4500ms on ALB target group."
 ```
 
-A successful response returns `HTTP/2 200` with user details (such as `displayName` and `accountId`).
+You can view the active investigation directly inside your **AWS DevOps Agent Incident Response Dashboard**:
 
----
+<p align="center">
+  <img src="images/investigation-devops-agent-1.png" alt="AWS DevOps Agent Incident Response Dashboard" width="700" />
+</p>
 
-## 3. Deploy via AWS CloudShell
+* **Observed in Jira**:
+  1. A new incident ticket is automatically created in project `KAN`.
+  2. Diagnostic journal updates stream into ticket comments.
+  3. When complete, the full **Root Cause Analysis (RCA)**, affected resources, and remediation action items are posted directly into the Jira ticket comments, and the label `rca-completed` is applied!
 
-### Step 3.1: Launch AWS CloudShell
-1. Open the [AWS Management Console](https://console.aws.amazon.com/).
-2. Click the **CloudShell icon** (`>_`) in the top navigation bar.
-
-### Step 3.2: Clone the Project
-```bash
-git clone https://github.com/ksravikumar2005/devops-agent-jira.git
-cd devops-agent-jira
-```
-
-### Step 3.3: Execute Setup Wizard
-```bash
-bash cloudshell-setup.sh
-```
-
-### Step 3.4: Follow the Interactive Prompts
-1. **Target Region**: Confirm your AWS region (default: current region).
-2. **Agent Space**: Choose or enter either your Agent Space Name (e.g. `DevOpsSpace-Prod`) or Space ID (e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`). The script automatically resolves names to the underlying ID.
-3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (trailing slashes are sanitized automatically).
-4. **Jira User Email**: Enter your Atlassian login email.
-5. **Jira API Token**: Paste your generated Atlassian API token.
-6. **Jira Project Key**: Enter your target project key (e.g., `KAN`).
-7. **Jira Issue Type**: Choose `Task`, `Bug`, or `Incident` (default: auto-detected from project metadata).
-
-The script automatically executes a live pre-flight check against Jira REST API v3, provisions CloudFormation, stores credentials in Secrets Manager, enables DynamoDB state tracking, creates EventBridge rules, and outputs your secured Webhook URL.
-
----
-
-## 4. Register Inbound Webhook in Jira Cloud (Secured with Shared Secret)
-
-To enable Jira to securely notify AWS DevOps Agent when tickets are created or commented with `/investigate`, the endpoint is protected by a **cryptographic shared secret token**:
-
-1. Retrieve your secured `JiraWebhookUrl`:
-   ```bash
-   WEBHOOK_URL=$(aws cloudformation describe-stacks \
-     --stack-name devops-agent-jira-integration \
-     --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
-     --output text)
-
-   WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
-     --secret-id "devops-agent/jira-credentials" \
-     --query "SecretString" --output text | jq -r '.webhook_secret_token')
-
-   echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
+### Scenario 2: Inbound Flow (Jira ➡️ AWS DevOps Agent)
+Test triggering DevOps Agent from Jira:
+1. Open any existing ticket (e.g. `KAN-4`) or create a new ticket in project `KAN`.
+2. In the comment box, type:
+   ```text
+   /investigate
    ```
-2. In Atlassian Jira Cloud:
-   - Click the gear icon (**Settings ⚙️**) in the top right header.
-   - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
-   - Click **+ Create a Webhook** (top right).
-   - Configure:
-     - **Name**: `AWS DevOps Agent Integration`
-     - **Status**: `Enabled`
-     - **URL**: Paste your secured `JiraWebhookUrl` (including the `?token=...` parameter).
-     - **Issue related events**:
-       - Check **Issue**: `created`, `updated`
-       - Check **Comment**: `created`
-     - *(Optional JQL Filter)*: `project = "KAN"`
-   - Scroll to the bottom of the page and click **Create**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
+   *(or attach the label `aws-devops-agent` to the ticket)*.
+3. **Observed in Jira**:
+   - The webhook receiver authenticates the shared secret token.
+   - AWS DevOps Agent starts an investigation in AWS and immediately replies on the ticket with the **Task ID** and AWS Console deep link.
+   - When the investigation concludes, the agent posts the full Root Cause Analysis (RCA) and remediation steps back to that same Jira ticket!
 
 ---
 
-## 5. Verification & Testing Scenarios
+## 🔍 CloudWatch Logs Inspection
 
-You can verify the integration using either of the two automated scenarios:
-
-```text
-==> [6/6] End-to-End Integration Verification
-Choose an automated scenario to verify the live integration:
-
-  1) Outbound: Trigger REAL Investigation in AWS DevOps Agent
-     Creates an authentic backlog task in your DevOps Agent Space using AWS CLI.
-     DevOps Agent starts analyzing, emits native 'aws.aidevops' to EventBridge,
-     creates a live Jira ticket in KAN, and posts diagnostic updates & RCA.
-
-  2) Inbound: Create Incident in Jira & Trigger AWS DevOps Agent
-     Creates a new live incident ticket in Jira (KAN) via REST API.
-     The webhook receiver triggers AWS DevOps Agent to start an investigation,
-     acknowledges with the Task ID, and sends investigation details back to Jira.
-
-  3) Skip Verification (Complete setup directly)
-
-Select verification scenario [1/2/3] (default: 1):
-```
-
----
-
-## 6. Verification: Real Investigation vs. Synthetic Testing
-
-### Option A: Trigger a REAL DevOps Agent Investigation (Recommended)
-Trigger an actual backlog task of type `INVESTIGATION` inside your live AWS DevOps Agent Space using the official AWS CLI. AWS DevOps Agent will autonomously analyze your infrastructure and emit authentic `aws.aidevops` lifecycle events (`Investigation Created`, `Investigation In Progress`, `Investigation Completed`) to EventBridge:
-
-```bash
-bash scripts/create-real-investigation.sh
-```
-
-Or invoke directly via the official AWS CLI:
-```bash
-aws devops-agent create-backlog-task \
-    --agent-space-id "3f1e5f09-659d-4073-a7a5-2b5ca9e633bd" \
-    --task-type "INVESTIGATION" \
-    --title "Investigate Latency Spike on Order Processing Microservice" \
-    --description "Autonomous root cause analysis across CloudWatch, X-Ray, and ECS logs" \
-    --priority "HIGH" \
-    --region "us-east-1"
-```
-
-### Option B: Synthetic Test Suite
-You can manually trigger synthetic tests anytime using the included test runner:
-
-```bash
-bash scripts/test-integration.sh
-```
-
-Or test Lambda directly:
-```bash
-bash scripts/test-integration.sh --direct
-```
-
-Or trigger using the Python CLI simulator:
-```bash
-python3 scripts/simulate-investigation.py --region us-east-1 --space-id 3f1e5f09-659d-4073-a7a5-2b5ca9e633bd
-```
-
----
-
-## 6. CloudWatch Logs Inspection
-
-To observe live Lambda processing and API payloads:
+To observe live Lambda processing and API payloads in real time:
 
 ```bash
 aws logs tail "/aws/lambda/devops-agent-jira-integration-EventHandler" --follow
+aws logs tail "/aws/lambda/devops-agent-jira-integration-WebhookReceiver" --follow
 ```
 
 ---
 
-## 7. Teardown & Clean Up
+## 🧹 Teardown & Clean Up
 
 To delete all created resources (CloudFormation stack, Secrets Manager secret, DynamoDB table):
 

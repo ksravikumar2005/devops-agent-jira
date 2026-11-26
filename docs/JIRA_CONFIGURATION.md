@@ -100,9 +100,20 @@ echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
    - **Name**: `AWS DevOps Agent Integration`
    - **Status**: `Enabled`
    - **URL**: Paste your **Secured Webhook URL** (including the `?token=...` parameter).
+   - **Secret**: Leave blank (*"Leave blank for no secret"*, as the cryptographic token in the URL authenticates the payload).
+
+   <p align="center">
+     <img src="images/jira-webhook-2.png" alt="Jira Webhook Configuration" width="700" />
+   </p>
+
    - **Issue related events**:
      - Check **Issue**: `created`, `updated`
-     - Check **Comment**: `created`
+     - Check **Comment**: `created` (and `updated`)
+
+   <p align="center">
+     <img src="images/jira-webhook-3.png" alt="Jira Webhook Events Checklist" width="700" />
+   </p>
+
    - *(Optional JQL Filter)*: Restrict events to your project:
      ```jql
      project = "KAN"
