@@ -119,6 +119,17 @@ This solution supports two core operational workflows:
 * **Live Investigation Updates**: As the agent analyzes the infrastructure, it posts step-by-step diagnostic progress notes.
 * **Root Cause Analysis (RCA)**: When the investigation concludes, the integration appends the full RCA findings, affected resource ARNs, and recommended remediation actions, and attaches the `rca-completed` label.
 
+### 3. What Happens When Someone Updates a Jira Ticket (`jira:issue_updated`)
+When engineers interact with or modify an existing Jira ticket, the webhook receiver processes the update according to the action taken:
+
+| Jira Update Action | System Behavior |
+| :--- | :--- |
+| **Comment with `/investigate`** | **Explicit Trigger**: Dispatches a fresh autonomous AWS DevOps Agent investigation task for the ticket. |
+| **Add Label `aws-devops-agent`** | **Initial Launch**: If the ticket was not previously mapped to an active investigation, launches an investigation task and links the ticket. |
+| **Ticket Resolved / Closed** | **Lifecycle Sync**: When the status transitions to *Done*, *Resolved*, or *Closed*, the integration updates the tracking state in DynamoDB to `RESOLVED`. |
+| **Routine Edits (Assignee, Description, Move Columns)** | **Idempotency Guard**: If the ticket already has an active investigation in progress, routine edits are safely acknowledged (`HTTP 200 already_active`) without spawning duplicate investigations. |
+| **Engineer Adds Comments / Details** | **In-Investigation AI Context**: If the **Atlassian Remote MCP Server** is enabled in your DevOps Agent Space, AWS DevOps Agent actively reads newly added comments, rollback notes, and attachments via MCP tools during its live reasoning loop. |
+
 ---
 
 ## 7. Useful Jira Filters & Dashboards (JQL)
