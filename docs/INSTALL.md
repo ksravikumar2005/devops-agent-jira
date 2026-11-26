@@ -61,7 +61,7 @@ A successful response returns `HTTP/2 200` with user details (such as `displayNa
 
 ---
 
-## 4. Deployment using AWS CloudShell (Interactive)
+## 3. Deploy via AWS CloudShell
 
 ### Step 3.1: Launch AWS CloudShell
 1. Open the [AWS Management Console](https://console.aws.amazon.com/).
@@ -80,29 +80,53 @@ bash cloudshell-setup.sh
 
 ### Step 3.4: Follow the Interactive Prompts
 1. **Target Region**: Confirm your AWS region (default: current region).
-2. **Agent Space ID**: The wizard attempts to discover your Agent Space using `aws aidevops list-agent-spaces`. If found, press `Enter` to use it, or copy/paste your Space ID.
-   > **Tip**: You can copy your Agent Space ID (e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`) directly from the AWS Console top breadcrumb navigation under **AWS DevOps Agent > Agent spaces > Agent space: [ID]**:
-   >
-   > <p align="center">
-   >   <img src="images/aws-devops-agent-space-id.png" alt="AWS DevOps Agent Space ID Breadcrumb" width="600" />
-   > </p>
-3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (you can copy the base domain directly from your browser's address bar up to `.atlassian.net`):
-   > <p align="center">
-   >   <img src="images/jira-base-url-address-bar.png" alt="Copy Jira Base URL from Address Bar" width="600" />
-   > </p>
-   > *(Note: Accidental trailing slashes like `https://mycompany.atlassian.net/` are automatically sanitized and stripped to prevent `//` path bugs).*
-4. **Jira User Email**: Enter the email of the Jira administrator or service account.
-5. **Jira API Token**: Paste your API token (input is masked for security).
-6. **Jira Project Key**: Enter the key of the project where incident tickets should be created (e.g., `OPS`).
-7. **Jira Issue Type**: Choose `Incident`, `Bug`, or `Task` (default: `Incident`).
+2. **Agent Space**: Choose or enter either your Agent Space Name (e.g. `DevOpsSpace-Prod`) or Space ID (e.g. `3f1e5f09-659d-4073-a7a5-2b5ca9e633bd`). The script automatically resolves names to the underlying ID.
+3. **Jira Base URL**: Enter your Atlassian Cloud domain, e.g., `https://mycompany.atlassian.net` (trailing slashes are sanitized automatically).
+4. **Jira User Email**: Enter your Atlassian login email.
+5. **Jira API Token**: Paste your generated Atlassian API token.
+6. **Jira Project Key**: Enter your target project key (e.g., `KAN`).
+7. **Jira Issue Type**: Choose `Task`, `Bug`, or `Incident` (default: auto-detected from project metadata).
 
-The script automatically executes a live pre-flight check against Jira REST API v3 `/rest/api/3/myself` and `/rest/api/3/project/{KEY}` to verify connectivity before deploying any AWS resources.
+The script automatically executes a live pre-flight check against Jira REST API v3, provisions CloudFormation, stores credentials in Secrets Manager, enables DynamoDB state tracking, creates EventBridge rules, and outputs your secured Webhook URL.
 
 ---
 
-## 4. Verification & Testing Scenarios
+## 4. Register Inbound Webhook in Jira Cloud (Secured with Shared Secret)
 
-Upon successful deployment, the script presents two live verification scenarios:
+To enable Jira to securely notify AWS DevOps Agent when tickets are created or commented with `/investigate`, the endpoint is protected by a **cryptographic shared secret token**:
+
+1. Retrieve your secured `JiraWebhookUrl`:
+   ```bash
+   WEBHOOK_URL=$(aws cloudformation describe-stacks \
+     --stack-name devops-agent-jira-integration \
+     --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
+     --output text)
+
+   WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
+     --secret-id "devops-agent/jira-credentials" \
+     --query "SecretString" --output text | jq -r '.webhook_secret_token')
+
+   echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
+   ```
+2. In Atlassian Jira Cloud:
+   - Click the gear icon (**Settings ⚙️**) in the top right header.
+   - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
+   - Click **+ Create a Webhook** (top right).
+   - Configure:
+     - **Name**: `AWS DevOps Agent Integration`
+     - **Status**: `Enabled`
+     - **URL**: Paste your secured `JiraWebhookUrl` (including the `?token=...` parameter).
+     - **Issue related events**:
+       - Check **Issue**: `created`, `updated`
+       - Check **Comment**: `created`
+     - *(Optional JQL Filter)*: `project = "KAN"`
+   - Click **Save**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
+
+---
+
+## 5. Verification & Testing Scenarios
+
+You can verify the integration using either of the two automated scenarios:
 
 ```text
 ==> [6/6] End-to-End Integration Verification
@@ -122,39 +146,6 @@ Choose an automated scenario to verify the live integration:
 
 Select verification scenario [1/2/3] (default: 1):
 ```
-
----
-
-## 5. Register Inbound Webhook in Jira Cloud (Secured with Shared Secret)
-
-To enable Jira to securely notify AWS DevOps Agent when tickets are created or commented with `/investigate`, the endpoint is protected by a **shared secret token**:
-
-1. Retrieve your secured `JiraWebhookUrl`:
-   ```bash
-   WEBHOOK_URL=$(aws cloudformation describe-stacks \
-     --stack-name devops-agent-jira-integration \
-     --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
-     --output text)
-
-   WEBHOOK_TOKEN=$(aws secretsmanager get-secret-value \
-     --secret-id "devops-agent/jira-credentials" \
-     --query "SecretString" --output text | jq -r '.webhook_secret_token')
-
-   echo "Secured URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
-   ```
-2. In Atlassian Jira Cloud:
-   - Click the gear icon (**Settings ⚙️**) in the top right header.
-   - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
-   - Click **+ Create a Webhook** (top right).
-   - Configure:
-     - **Name**: `AWS DevOps Agent Integration`
-     - **Status**: `Enabled`
-     - **URL**: Paste your secured `JiraWebhookUrl` (including the `?token=...` parameter).
-     - **Issue related events**:
-       - Check **Issue**: `created`, `updated`
-       - Check **Comment**: `created`
-     - *(Optional JQL Filter)*: `project = "KAN"`
-   - Click **Save**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
 
 ---
 

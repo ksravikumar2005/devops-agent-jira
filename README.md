@@ -28,6 +28,28 @@ This solution provides a complete, production-ready, bi-directional integration 
 
 ---
 
+## 🗺️ Master End-to-End Implementation Sequence
+
+Follow this complete step-by-step sequence to go from zero to a live, bi-directional production integration:
+
+```mermaid
+flowchart LR
+    S1["1. Set Up Jira<br/>(Site, Token & Project)"] --> S2["2. Set Up DevOps Agent<br/>(Create Space)"]
+    S2 --> S3["3. Deploy in CloudShell<br/>(git clone & setup wizard)"]
+    S3 --> S4["4. Register Webhook<br/>(Paste secured URL in Jira)"]
+    S4 --> S5["5. Live Verification<br/>(Test Outbound & Inbound)"]
+```
+
+| Step | Action | Description |
+| :--- | :--- | :--- |
+| **1** | **Set Up Atlassian Jira Cloud** | Sign up/sign in, note your target Project Key (`KAN`), and generate a standard API token from Atlassian Security. |
+| **2** | **Set Up AWS DevOps Agent** | Create or locate your Agent Space in the AWS Console (`us-east-1`), noting either your Space Name or Space ID. |
+| **3** | **Deploy via AWS CloudShell** | Clone this repository in CloudShell and execute `bash cloudshell-setup.sh` to provision the entire serverless infrastructure. |
+| **4** | **Configure Jira Inbound Webhook** | Copy the generated Secured Webhook URL (`?token=...`) into Jira **Settings > System > Webhooks**. |
+| **5** | **Verify & Test Bi-Directional Flow** | Run Scenario 1 (DevOps Agent ➔ Jira) and Scenario 2 (Jira ➔ DevOps Agent) to confirm ticket creation, status updates, and RCA comments. |
+
+---
+
 ## 🔍 Verifying Your Jira API Key (Pre-Flight Check)
 
 Before running the deployment, verify your Jira Cloud URL, user email, and API token directly from AWS CloudShell or your local terminal:
