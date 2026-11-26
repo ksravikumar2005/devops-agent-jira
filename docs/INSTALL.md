@@ -125,7 +125,35 @@ Select verification scenario [1/2/3] (default: 1):
 
 ---
 
-## 5. Verification: Real Investigation vs. Synthetic Testing
+## 5. Register Inbound Webhook in Jira Cloud (Bi-Directional Flow)
+
+To enable Jira to automatically notify AWS DevOps Agent when tickets are created or commented with `/investigate`:
+
+1. Copy your deployed `JiraWebhookUrl`:
+   ```bash
+   aws cloudformation describe-stacks \
+     --stack-name devops-agent-jira-integration \
+     --query "Stacks[0].Outputs[?OutputKey=='JiraWebhookUrl'].OutputValue" \
+     --output text
+   ```
+   *(Example: `https://3ra5eo6jjd5orsf4xvtwy6onbe0dvkyr.lambda-url.us-east-1.on.aws/`)*
+2. In Atlassian Jira Cloud:
+   - Click the gear icon (**Settings ⚙️**) in the top right header.
+   - Navigate to **System > Webhooks** (under *Advanced* in the left sidebar).
+   - Click **+ Create a Webhook** (top right).
+   - Configure:
+     - **Name**: `AWS DevOps Agent Integration`
+     - **Status**: `Enabled`
+     - **URL**: Paste your `JiraWebhookUrl`.
+     - **Issue related events**:
+       - Check **Issue**: `created`, `updated`
+       - Check **Comment**: `created`
+     - *(Optional JQL Filter)*: `project = "KAN"`
+   - Click **Save**.
+
+---
+
+## 6. Verification: Real Investigation vs. Synthetic Testing
 
 ### Option A: Trigger a REAL DevOps Agent Investigation (Recommended)
 Trigger an actual backlog task of type `INVESTIGATION` inside your live AWS DevOps Agent Space using the official AWS CLI. AWS DevOps Agent will autonomously analyze your infrastructure and emit authentic `aws.aidevops` lifecycle events (`Investigation Created`, `Investigation In Progress`, `Investigation Completed`) to EventBridge:
