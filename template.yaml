@@ -222,6 +222,14 @@ Resources:
       Action: lambda:InvokeFunctionUrl
       Principal: '*'
 
+  JiraWebhookFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt JiraWebhookFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
 Outputs:
   DynamoDBTableName:
     Description: DynamoDB table storing task_id to Jira issue key mappings.

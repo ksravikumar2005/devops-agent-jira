@@ -439,6 +439,15 @@ aws lambda update-function-code \
     --zip-file "fileb://${TEMP_ZIP}" \
     --region "$TARGET_REGION" > /dev/null
 
+# Ensure Function URL has both required permissions: InvokeFunctionUrl & InvokeFunction
+aws lambda add-permission \
+    --function-name "$WEBHOOK_FUNCTION_NAME" \
+    --statement-id "FunctionURLAllowPublicAccessFunction" \
+    --action "lambda:InvokeFunction" \
+    --principal "*" \
+    --invoked-via-function-url \
+    --region "$TARGET_REGION" 2>/dev/null || true
+
 rm -f "$TEMP_ZIP"
 echo -e "  ${GREEN}✓ Lambda functions updated and active.${NC}"
 
