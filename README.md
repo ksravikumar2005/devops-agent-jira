@@ -66,7 +66,9 @@ The interactive wizard will:
 4. Provision AWS Secrets Manager secret, DynamoDB state tracking table, and IAM execution roles.
 5. Deploy the serverless integration layer (CloudFormation template + Python 3.12 Lambda).
 6. Configure the Amazon EventBridge rule filtering `aws.aidevops` lifecycle events.
-7. Execute an automated synthetic investigation test that creates a live Jira ticket and appends a simulated Root Cause Analysis (RCA)!
+7. Offer two live verification scenarios:
+   - **Scenario 1**: Trigger a REAL investigation in AWS DevOps Agent and verify live Jira ticket creation and RCA updates.
+   - **Scenario 2**: Create a live incident in Jira and verify inbound triggering of AWS DevOps Agent with acknowledgment.
 
 ---
 

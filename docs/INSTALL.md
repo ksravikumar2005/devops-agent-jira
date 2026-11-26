@@ -100,20 +100,28 @@ The script automatically executes a live pre-flight check against Jira REST API 
 
 ---
 
-## 4. Verification & Testing
+## 4. Verification & Testing Scenarios
 
-Upon successful deployment, the script offers to run an automated synthetic test:
+Upon successful deployment, the script presents two live verification scenarios:
 
 ```text
-Would you like to run an automated synthetic investigation test? [Y/n]: Y
-```
+==> [6/6] End-to-End Integration Verification
+Choose an automated scenario to verify the live integration:
 
-When confirmed, it will:
-1. Emit a synthetic `Investigation Created` event to Amazon EventBridge.
-2. Wait 6 seconds and query the DynamoDB state table `devops-agent-jira-mappings`.
-3. Print the created Jira Issue Key (e.g., `OPS-42`) with a direct link.
-4. Emit an `Investigation Completed` event with simulated Root Cause Analysis (RCA) findings.
-5. Print confirmation that the RCA findings were added as a comment.
+  1) Outbound: Trigger REAL Investigation in AWS DevOps Agent
+     Creates an authentic backlog task in your DevOps Agent Space using AWS CLI.
+     DevOps Agent starts analyzing, emits native 'aws.aidevops' to EventBridge,
+     creates a live Jira ticket in KAN, and posts diagnostic updates & RCA.
+
+  2) Inbound: Create Incident in Jira & Trigger AWS DevOps Agent
+     Creates a new live incident ticket in Jira (KAN) via REST API.
+     The webhook receiver triggers AWS DevOps Agent to start an investigation,
+     acknowledges with the Task ID, and sends investigation details back to Jira.
+
+  3) Skip Verification (Complete setup directly)
+
+Select verification scenario [1/2/3] (default: 1):
+```
 
 ---
 

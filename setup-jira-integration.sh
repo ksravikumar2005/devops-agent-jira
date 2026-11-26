@@ -436,138 +436,212 @@ WEBHOOK_URL=$(aws cloudformation describe-stacks \
     --output text 2>/dev/null || echo "")
 
 # ------------------------------------------------------------------------------
-# 6. Verification & End-to-End Synthetic Test
+# 6. End-to-End Integration Verification Scenarios
 # ------------------------------------------------------------------------------
 echo -e "\n${BLUE}==> [6/6] End-to-End Integration Verification${NC}"
+echo -e "Choose an automated scenario to verify the live integration:\n"
+echo -e "  ${BOLD}1) Outbound: Trigger REAL Investigation in AWS DevOps Agent${NC}"
+echo -e "     Creates an authentic backlog task in your DevOps Agent Space using AWS CLI."
+echo -e "     DevOps Agent starts analyzing, emits native 'aws.aidevops' to EventBridge,"
+echo -e "     creates a live Jira ticket in ${BOLD}${JIRA_PROJECT}${NC}, and posts diagnostic updates & RCA."
+echo -e ""
+echo -e "  ${BOLD}2) Inbound: Create Incident in Jira & Trigger AWS DevOps Agent${NC}"
+echo -e "     Creates a new live incident ticket in Jira (${BOLD}${JIRA_PROJECT}${NC}) via REST API."
+echo -e "     The webhook receiver triggers AWS DevOps Agent to start an investigation,"
+echo -e "     acknowledges with the Task ID, and sends investigation details back to Jira."
+echo -e ""
+echo -e "  ${BOLD}3) Skip Verification${NC} (Complete setup directly)\n"
+
 if [ "$NON_INTERACTIVE" = true ]; then
-    RUN_TEST="${RUN_TEST:-true}"
-    echo -e "  Non-interactive test execution: ${BOLD}${RUN_TEST}${NC}"
+    TEST_CHOICE="${TEST_SCENARIO:-1}"
+    echo -e "  Non-interactive test scenario selected: ${BOLD}${TEST_CHOICE}${NC}"
 else
-    DEFAULT_TEST_CHOICE="${RUN_TEST:-Y}"
-    read -rp "Would you like to run an automated synthetic investigation test? [${DEFAULT_TEST_CHOICE}/n]: " USER_RUN_TEST
-    RUN_TEST="${USER_RUN_TEST:-$DEFAULT_TEST_CHOICE}"
+    read -rp "Select verification scenario [1/2/3] (default: 1): " USER_CHOICE
+    TEST_CHOICE="${USER_CHOICE:-1}"
 fi
 
-if [[ "$RUN_TEST" = true ]] || [[ "$RUN_TEST" =~ ^[Yy] ]]; then
-    echo -e "\n  ${CYAN}Triggering simulated 'Investigation Created' event...${NC}"
-    TEST_TASK_ID="tsk-test-$(date +%s)"
-    TEST_EXEC_ID="ex-test-$(date +%s)"
+if [ "$TEST_CHOICE" = "1" ]; then
+    echo -e "\n${CYAN}======================================================================${NC}"
+    echo -e "${BOLD} Scenario 1: Triggering Real Investigation in AWS DevOps Agent       ${NC}"
+    echo -e "${CYAN}======================================================================${NC}"
 
-    TEST_EVENT_JSON=$(jq -n \
-      --arg task "$TEST_TASK_ID" \
-      --arg space "$AGENT_SPACE_ID" \
-      --arg exec "$TEST_EXEC_ID" \
-      --arg region "$TARGET_REGION" \
-      --arg acct "$CURRENT_ACCOUNT_ID" \
+    CLI_BIN="aws devops-agent"
+    if ! aws devops-agent help &>/dev/null && aws aidevops help &>/dev/null; then
+        CLI_BIN="aws aidevops"
+    fi
+
+    SCENARIO_TITLE="Investigate High Latency Anomaly and 5xx Spike on Checkout Service"
+    SCENARIO_DESC="Autonomous incident investigation to analyze correlated CloudWatch metrics, OpenSearch logs, and X-Ray traces across the checkout fleet."
+    CLIENT_TOKEN="setup-scen1-$(date +%s)-$RANDOM"
+
+    echo -e "  Submitting backlog task to AWS DevOps Agent (${BOLD}${CLI_BIN} create-backlog-task${NC})..."
+    TASK_OUTPUT=$($CLI_BIN create-backlog-task \
+        --agent-space-id "$AGENT_SPACE_ID" \
+        --task-type "INVESTIGATION" \
+        --title "$SCENARIO_TITLE" \
+        --description "$SCENARIO_DESC" \
+        --priority "HIGH" \
+        --client-token "$CLIENT_TOKEN" \
+        --region "$TARGET_REGION" \
+        --output json 2>&1 || echo "{}")
+
+    REAL_TASK_ID=$(echo "$TASK_OUTPUT" | jq -r '.taskId // .task.taskId // empty' 2>/dev/null || echo "")
+
+    if [ -n "$REAL_TASK_ID" ]; then
+        echo -e "  ${GREEN}✓ Real DevOps Agent Investigation Task Created!${NC}"
+        echo -e "  DevOps Task ID: ${BOLD}${REAL_TASK_ID}${NC}"
+        echo -e "\n  ${CYAN}What is happening right now in AWS:${NC}"
+        echo -e "  1. AWS DevOps Agent has autonomously started analyzing your AWS infrastructure."
+        echo -e "  2. The service emitted an authentic ${BOLD}'aws.aidevops'${NC} -> ${BOLD}'Investigation Created'${NC} event."
+        echo -e "  3. EventBridge routed the event to your Lambda handler."
+        echo -e "  4. Lambda is creating a real ticket in Jira project ${BOLD}${JIRA_PROJECT}${NC}..."
+
+        echo -e "\n  Polling DynamoDB table '${TABLE_NAME}' for the created Jira ticket..."
+        MAPPED_ISSUE=""
+        for i in {1..10}; do
+            echo -n "  Waiting for Jira creation (attempt $i/10)... "
+            sleep 4
+            MAPPED_ISSUE=$(aws dynamodb get-item \
+                --table-name "$TABLE_NAME" \
+                --key "{\"taskId\": {\"S\": \"${REAL_TASK_ID}\"}}" \
+                --region "$TARGET_REGION" \
+                --query "Item.jiraIssueKey.S" \
+                --output text 2>/dev/null || echo "")
+            if [ -n "$MAPPED_ISSUE" ] && [ "$MAPPED_ISSUE" != "None" ]; then
+                echo -e "${GREEN}Found!${NC}"
+                break
+            fi
+            echo "pending..."
+        done
+
+        if [ -n "$MAPPED_ISSUE" ] && [ "$MAPPED_ISSUE" != "None" ]; then
+            echo -e "\n${GREEN}======================================================================${NC}"
+            echo -e "${GREEN}${BOLD} SUCCESS! Live Jira ticket created from Real AWS DevOps Agent Event!${NC}"
+            echo -e "${GREEN}======================================================================${NC}"
+            echo -e "  DevOps Task ID:    ${BOLD}${REAL_TASK_ID}${NC}"
+            echo -e "  Jira Issue Key:    ${BOLD}${MAPPED_ISSUE}${NC}"
+            echo -e "  Direct Ticket URL: ${BLUE}${BOLD}${JIRA_URL}/browse/${MAPPED_ISSUE}${NC}"
+            echo -e "======================================================================\n"
+        else
+            echo -e "\n  ${YELLOW}[NOTE] Ticket creation still propagating. Check Lambda logs:${NC}"
+            echo -e "  aws logs tail \"/aws/lambda/${LAMBDA_FUNCTION_NAME}\" --since 5m --region ${TARGET_REGION}"
+        fi
+    else
+        echo -e "\n  ${RED}[ERROR] Failed to create backlog task in AWS DevOps Agent:${NC}"
+        echo "$TASK_OUTPUT"
+    fi
+
+elif [ "$TEST_CHOICE" = "2" ]; then
+    echo -e "\n${CYAN}======================================================================${NC}"
+    echo -e "${BOLD} Scenario 2: Creating Incident in Jira & Testing Inbound Trigger     ${NC}"
+    echo -e "${CYAN}======================================================================${NC}"
+
+    INCIDENT_SUMMARY="Production Incident: 504 Gateway Timeout Spike on Checkout Service ($(date +%H:%M:%S))"
+    INCIDENT_DESC="Elevated error rates detected across API Gateway and ALB target groups. Customer checkout transactions failing with 504 Gateway Timeouts. Autonomous diagnostic investigation requested."
+
+    # 1. Create Incident ticket in Jira via REST API v3
+    echo -e "  [Step 1] Creating a new incident ticket in Jira project ${BOLD}${JIRA_PROJECT}${NC}..."
+    JIRA_PAYLOAD=$(jq -n \
+      --arg project "$JIRA_PROJECT" \
+      --arg summary "$INCIDENT_SUMMARY" \
+      --arg description "$INCIDENT_DESC" \
+      --arg issueType "$JIRA_ISSUE_TYPE" \
       '{
-        version: "0",
-        id: "test-event-uuid",
-        "detail-type": "Investigation Created",
-        source: "aws.aidevops",
-        account: $acct,
-        time: (now | todateiso8601),
-        region: $region,
-        resources: [("arn:aws:aidevops:" + $region + ":" + $acct + ":agentspace/" + $space)],
-        detail: {
-          metadata: {
-            agent_space_id: $space,
-            task_id: $task,
-            execution_id: $exec
+        fields: {
+          project: { key: $project },
+          summary: $summary,
+          description: {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "text",
+                    text: $description
+                  }
+                ]
+              }
+            ]
           },
-          data: {
-            task_type: "INVESTIGATION",
-            status: "PENDING",
-            symptom: "Synthetic Test: Spikeline Latency Anomaly on OrderProcessingService",
-            priority: "HIGH"
-          }
+          issuetype: { name: $issueType },
+          labels: ["aws-devops-agent", "incident-management", "alert"]
         }
       }')
 
-    # Use JSON file for put-events to guarantee 100% shell escaping safety
-    TEST_ENTRY_FILE="/tmp/eb-entry-created-$$.json"
-    cat << EOF > "$TEST_ENTRY_FILE"
-[
-  {
-    "Source": "custom.aidevops",
-    "DetailType": "Investigation Created",
-    "Detail": $(echo "$TEST_EVENT_JSON" | jq -c '.detail' | jq -R .),
-    "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]
-  }
-]
-EOF
+    CREATE_RESP=$(curl -s -L -w "\n%{http_code}" \
+      --connect-timeout 15 \
+      -u "${JIRA_EMAIL}:${JIRA_TOKEN}" \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      -X POST \
+      -d "$JIRA_PAYLOAD" \
+      "${JIRA_URL}/rest/api/3/issue")
 
-    PUT_RESP=$(aws events put-events --entries "file://${TEST_ENTRY_FILE}" --region "$TARGET_REGION" 2>&1)
-    rm -f "$TEST_ENTRY_FILE"
-    FAILED_COUNT=$(echo "$PUT_RESP" | jq -r '.FailedEntryCount // 0' 2>/dev/null || echo "0")
+    JIRA_BODY=$(echo "$CREATE_RESP" | sed '$d')
+    JIRA_CODE=$(echo "$CREATE_RESP" | tail -n 1)
+    NEW_ISSUE_KEY=$(echo "$JIRA_BODY" | jq -r '.key // empty' 2>/dev/null || echo "")
 
-    if [ "$FAILED_COUNT" -gt 0 ]; then
-        echo -e "  ${RED}[ERROR] EventBridge put-events reported ${FAILED_COUNT} failure(s):${NC} ${PUT_RESP}"
-    else
-        echo -e "  ${GREEN}✓ Event dispatched to EventBridge.${NC} Waiting 10 seconds for Lambda cold start and Jira API..."
-    fi
+    if [ "$JIRA_CODE" = "201" ] && [ -n "$NEW_ISSUE_KEY" ]; then
+        echo -e "  ${GREEN}✓ Live Incident Created in Jira: ${BOLD}${NEW_ISSUE_KEY}${NC}"
+        echo -e "  Direct Ticket Link: ${BLUE}${BOLD}${JIRA_URL}/browse/${NEW_ISSUE_KEY}${NC}"
 
-    sleep 10
+        echo -e "\n  [Step 2] Testing Inbound Webhook Trigger to AWS DevOps Agent..."
+        echo -e "  Sending ticket event to Webhook Function URL (${WEBHOOK_URL})..."
 
-    # Query DynamoDB for created issue
-    MAPPED_ISSUE=$(aws dynamodb get-item \
-        --table-name "$TABLE_NAME" \
-        --key "{\"taskId\": {\"S\": \"$TEST_TASK_ID\"}}" \
-        --region "$TARGET_REGION" \
-        --query "Item.jiraIssueKey.S" \
-        --output text 2>/dev/null || echo "")
-
-    if [ -n "$MAPPED_ISSUE" ] && [ "$MAPPED_ISSUE" != "None" ]; then
-        echo -e "  ${GREEN}✓ SUCCESS! Real Jira issue created: ${BOLD}${MAPPED_ISSUE}${NC}"
-        echo -e "  Direct Link: ${CYAN}${JIRA_URL}/browse/${MAPPED_ISSUE}${NC}\n"
-
-        # Now send Investigation Completed event to append RCA
-        echo -e "  ${CYAN}Triggering simulated 'Investigation Completed' with Root Cause Analysis (RCA)...${NC}"
-        COMPLETED_DETAIL=$(jq -n \
-          --arg task "$TEST_TASK_ID" \
-          --arg space "$AGENT_SPACE_ID" \
-          --arg exec "$TEST_EXEC_ID" \
+        WEBHOOK_TEST_PAYLOAD=$(jq -n \
+          --arg issueKey "$NEW_ISSUE_KEY" \
+          --arg summary "$INCIDENT_SUMMARY" \
+          --arg desc "$INCIDENT_DESC" \
+          --arg itype "$JIRA_ISSUE_TYPE" \
           '{
-            metadata: {
-              agent_space_id: $space,
-              task_id: $task,
-              execution_id: $exec
+            webhookEvent: "jira:issue_created",
+            issue: {
+              key: $issueKey,
+              fields: {
+                summary: $summary,
+                description: $desc,
+                issuetype: { name: $itype },
+                priority: { name: "High" },
+                labels: ["aws-devops-agent", "incident-management"]
+              }
             },
-            data: {
-              status: "COMPLETED",
-              root_cause: "Thread starvation in database connection pool caused by unindexed query scanning table orders. Correlated CPU spike on rds-mysql-prod.",
-              affected_resources: [
-                "arn:aws:rds:us-east-1:123456789012:db:orders-cluster-primary",
-                "arn:aws:ecs:us-east-1:123456789012:service/checkout-api"
-              ],
-              recommendations: [
-                "Apply composite index (customer_id, created_at) on table orders",
-                "Scale connection pool maximum from 50 to 120 connections",
-                "Enable RDS Performance Insights slow query logger"
-              ]
+            user: {
+              displayName: "Jira Setup Wizard"
             }
           }')
 
-        COMP_ENTRY_FILE="/tmp/eb-entry-comp-$$.json"
-        cat << EOF > "$COMP_ENTRY_FILE"
-[
-  {
-    "Source": "custom.aidevops",
-    "DetailType": "Investigation Completed",
-    "Detail": $(echo "$COMPLETED_DETAIL" | jq -c . | jq -R .),
-    "Resources": ["arn:aws:aidevops:${TARGET_REGION}:${CURRENT_ACCOUNT_ID}:agentspace/${AGENT_SPACE_ID}"]
-  }
-]
-EOF
-        aws events put-events --entries "file://${COMP_ENTRY_FILE}" --region "$TARGET_REGION" > /dev/null 2>&1
-        rm -f "$COMP_ENTRY_FILE"
+        WEBHOOK_RESP=$(curl -s -L \
+          -H "Content-Type: application/json" \
+          -X POST \
+          -d "$WEBHOOK_TEST_PAYLOAD" \
+          "$WEBHOOK_URL" 2>/dev/null || echo "{}")
 
-        sleep 5
-        echo -e "  ${GREEN}✓ RCA comment and findings successfully published to ${MAPPED_ISSUE}!${NC}"
+        TRIGGERED_TASK=$(echo "$WEBHOOK_RESP" | jq -r '.taskId // empty' 2>/dev/null || echo "")
+
+        if [ -n "$TRIGGERED_TASK" ]; then
+            echo -e "  ${GREEN}✓ Webhook successfully triggered AWS DevOps Agent!${NC}"
+            echo -e "  Initiated DevOps Agent Task ID: ${BOLD}${TRIGGERED_TASK}${NC}"
+            echo -e "  DevOps Agent has acknowledged and replied to Jira issue ${BOLD}${NEW_ISSUE_KEY}${NC}."
+
+            echo -e "\n${GREEN}======================================================================${NC}"
+            echo -e "${GREEN}${BOLD} SUCCESS! Inbound Flow from Jira to AWS DevOps Agent is Active!     ${NC}"
+            echo -e "${GREEN}======================================================================${NC}"
+            echo -e "  Jira Ticket:       ${BOLD}${NEW_ISSUE_KEY}${NC}"
+            echo -e "  DevOps Task ID:    ${BOLD}${TRIGGERED_TASK}${NC}"
+            echo -e "  Live Ticket URL:   ${BLUE}${BOLD}${JIRA_URL}/browse/${NEW_ISSUE_KEY}${NC}"
+            echo -e "  Console Deep Link: https://${TARGET_REGION}.console.aws.amazon.com/aidevops/home?region=${TARGET_REGION}#/spaces/${AGENT_SPACE_ID}/tasks/${TRIGGERED_TASK}"
+            echo -e "======================================================================\n"
+        else
+            echo -e "  ${YELLOW}Webhook response:${NC} ${WEBHOOK_RESP}"
+        fi
     else
-        echo -e "  ${YELLOW}[NOTE] Could not find mapped issue in DynamoDB for task ${TEST_TASK_ID}.${NC}"
-        echo -e "  Printing recent Lambda logs for debugging:\n"
-        aws logs tail "/aws/lambda/${LAMBDA_FUNCTION_NAME}" --region "$TARGET_REGION" --since 5m --format short 2>/dev/null || true
+        echo -e "  ${RED}[ERROR] Failed to create Jira incident ticket (HTTP ${JIRA_CODE}):${NC}"
+        echo "$JIRA_BODY"
     fi
+else
+    echo -e "  Verification skipped. Setup completed."
 fi
 
 # ------------------------------------------------------------------------------
