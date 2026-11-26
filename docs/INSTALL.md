@@ -120,7 +120,7 @@ To enable Jira to securely notify AWS DevOps Agent when tickets are created or c
        - Check **Issue**: `created`, `updated`
        - Check **Comment**: `created`
      - *(Optional JQL Filter)*: `project = "KAN"`
-   - Click **Save**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
+   - Scroll to the bottom of the page and click **Create**. Any incoming requests without this secret token are immediately blocked with **HTTP 403 Forbidden**.
 
 ---
 

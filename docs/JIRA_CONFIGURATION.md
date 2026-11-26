@@ -107,7 +107,7 @@ echo "Secured Webhook URL: ${WEBHOOK_URL}?token=${WEBHOOK_TOKEN}"
      ```jql
      project = "KAN"
      ```
-6. Click **Save** at the bottom of the page.
+6. Scroll to the bottom of the page and click **Create**.
 
 ---
 

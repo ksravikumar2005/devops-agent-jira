@@ -405,7 +405,7 @@ To allow Jira to securely notify AWS DevOps Agent, register the secured webhook:
        - Check **Issue**: `created`, `updated`
        - Check **Comment**: `created`
      - *(Optional JQL Filter)*: `project = "KAN"`
-   - Click **Save**.
+   - Scroll to the bottom of the page and click **Create**.
 
 ---
 
