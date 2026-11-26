@@ -102,21 +102,22 @@ aws cloudformation describe-stacks \
 
 ---
 
-## 6. How Engineers Use the Jira Integration
+## 6. How Engineers Use the Bi-Directional Integration
 
-### 1. Automated Outbound Incident Creation
-* When AWS DevOps Agent detects an anomaly (e.g. CloudWatch alarm, latency surge, or HTTP 5xx spike), it emits an `Investigation Created` event.
-* A Jira ticket is created automatically with direct links to the AWS DevOps Agent Space.
-* When investigation concludes, the full **Root Cause Analysis (RCA)**, affected AWS ARNs, and recommended remediation steps are posted as an ADF comment.
+This solution supports two core operational workflows:
 
-### 2. Manual Inbound Investigation Triggers
-Engineers can command AWS DevOps Agent directly from Jira:
-* **Slash Command**: On any Jira ticket, type a comment:
+### 1. Inbound: Trigger AWS DevOps Agent from Jira
+* **Trigger on Incident Submission**: Whenever an incident or alert ticket is submitted in Jira (with issue type `Incident`/`Alert`, priority `Highest`/`Critical`, or label `aws-devops-agent`), the solution automatically prompts AWS DevOps Agent to initiate an autonomous diagnostic investigation on your AWS environment.
+* **Trigger via Slash Command**: On any existing Jira ticket, comment:
   ```text
   /investigate
   ```
-  The webhook receiver catches the comment and dispatches an autonomous investigation in your AWS DevOps Agent Space.
-* **Label Trigger**: Add the label `trigger-investigation` or `aws-devops-agent` to any issue.
+* **Instant Acknowledgment**: The webhook receiver immediately responds to the Jira ticket with an informational comment confirming the assigned AWS DevOps Agent Task ID and console tracking link.
+
+### 2. Outbound: Automatically Create & Update Tickets from Non-Jira Sources
+* **Automated Creation from Non-Jira Triggers**: Whenever a new investigation begins in AWS DevOps Agent triggered by **non-Jira sources** (such as Amazon CloudWatch alarms, AWS Console, AWS CLI, automated EventBridge rules, or third-party monitoring), the integration automatically creates a new Jira ticket in your project.
+* **Live Investigation Updates**: As the agent analyzes the infrastructure, it posts step-by-step diagnostic progress notes.
+* **Root Cause Analysis (RCA)**: When the investigation concludes, the integration appends the full RCA findings, affected resource ARNs, and recommended remediation actions, and attaches the `rca-completed` label.
 
 ---
 

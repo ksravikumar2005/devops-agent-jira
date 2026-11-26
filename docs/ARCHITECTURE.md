@@ -4,24 +4,39 @@ This document details the architectural design, event lifecycles, and data contr
 
 ---
 
-## 1. System Architecture
+## 1. System Architecture & Bi-Directional Event Flow
+
+This solution operates as a bidirectional, closed-loop incident bridge:
+
+1. **Inbound Trigger (Jira ➡️ AWS DevOps Agent)**: Trigger AWS DevOps Agent incident investigations whenever an incident ticket is submitted in Jira or commented with `/investigate`.
+2. **Outbound Creation & Updates (Non-Jira Sources ➡️ AWS DevOps Agent ➡️ Jira)**: Whenever an investigation is initiated in AWS DevOps Agent by non-Jira sources (CloudWatch Alarms, AWS Console, CLI, automated EventBridge rules, third-party APM tools), it automatically creates a corresponding tracking ticket in Jira and streams investigation progress and Root Cause Analysis (RCA) directly into it.
 
 ```text
-[AWS CloudWatch / Alarms / Anomaly Triggers]
-                  │
-                  ▼
-         [AWS DevOps Agent Space] ◄──(MCP Tools)──► [Atlassian Remote MCP Server]
-                  │                                  (Reads Jira / Confluence Runbooks)
-                  │ (Emits lifecycle events)
-                  ▼
-     [Amazon EventBridge (default bus)]
-                  │
-                  │ Rule: source: "aws.aidevops", detail-type prefix: "Investigation"
-                  ▼
-         [AWS Lambda Function]
-            ├── Reads Secrets (AWS Secrets Manager)
-            ├── State Mapping (Amazon DynamoDB)
-            └── REST API v3 (Atlassian Jira Cloud)
+                                  ┌──────────────────────────────┐
+                                  │   Non-Jira Alert Sources     │
+                                  │ (CloudWatch, Console, CLI)   │
+                                  └──────────────┬───────────────┘
+                                                 │ 
+                                                 ▼
+┌──────────────────────┐             ┌────────────────────────┐             ┌──────────────────────┐
+│                      │   Webhook   │                        │  REST API   │                      │
+│ Atlassian Jira Cloud │────────────►│  Webhook Receiver      │────────────►│ AWS DevOps Agent     │
+│                      │  (/invest.) │  Lambda (Inbound)      │  (Backlog)  │ Space                │
+│                      │◄────────────│                        │             │                      │
+│                      │  Ack Comm.  └────────────────────────┘             └──────────┬───────────┘
+│                      │                                                               │
+│                      │◄─────────────────────────────────────────────┐                │ aws.aidevops
+│                      │  Issue Created, Diagnostic Logs, RCA Posted  │                ▼
+│                      │                                      ┌───────┴──────┐  ┌──────────────┐
+│                      │                                      │ EventHandler │◄─│ Amazon       │
+│                      │                                      │ Lambda       │  │ EventBridge  │
+│                      │                                      └───────┬──────┘  └──────────────┘
+│                      │                                              │
+│                      │                                              ▼
+│                      │                                      ┌──────────────┐
+│                      │                                      │ DynamoDB     │
+│                      │                                      │ State Table  │
+└──────────────────────┘                                      └──────────────┘
 ```
 
 ### Synergy with Atlassian Remote MCP Server (`https://mcp.atlassian.com/v2/mcp`)

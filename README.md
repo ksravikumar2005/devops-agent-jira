@@ -14,6 +14,20 @@ Based on the official AWS DevOps Architecture:
 
 ---
 
+## 🌟 Core Capabilities: Bi-Directional Closed-Loop Integration
+
+This solution provides a complete, production-ready, bi-directional integration between **Atlassian Jira Cloud** and **AWS DevOps Agent**:
+
+### 1. Inbound Investigation Trigger (Jira ➡️ AWS DevOps Agent)
+* **Trigger Investigations from Jira**: Whenever an incident or alert ticket is submitted in Jira (or when an engineer adds the `/investigate` slash command or label `aws-devops-agent`), the solution automatically prompts AWS DevOps Agent to initiate an autonomous diagnostic investigation on your AWS environment.
+* **Instant Acknowledgment**: The integration immediately posts a reply comment on the Jira ticket confirming the AWS DevOps Agent **Task ID** and providing a direct deep link to view real-time diagnostics in the AWS Console.
+
+### 2. Outbound Ticket Creation & Updates (AWS DevOps Agent ➡️ Jira)
+* **Automated Ticket Creation from Non-Jira Sources**: Whenever a new investigation begins in AWS DevOps Agent—triggered by **any non-Jira source** (such as Amazon CloudWatch alarms, AWS Console, AWS CLI, automated EventBridge rules, or third-party monitoring)—the integration automatically creates a corresponding Jira ticket in your target project (`KAN`).
+* **Continuous Diagnostic & RCA Updates**: As the agent investigates your infrastructure, it streams diagnostic step updates directly into the Jira ticket comments. When the analysis concludes, it automatically appends the complete **Root Cause Analysis (RCA)**, affected AWS resource ARNs, and recommended remediation actions, and applies the `rca-completed` label!
+
+---
+
 ## 🔍 Verifying Your Jira API Key (Pre-Flight Check)
 
 Before running the deployment, verify your Jira Cloud URL, user email, and API token directly from AWS CloudShell or your local terminal:
