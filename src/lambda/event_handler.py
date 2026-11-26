@@ -82,21 +82,25 @@ def get_state_table():
     return _CACHED_DDB_TABLE
 
 
-def get_mapped_issue_key(task_id: str) -> Optional[str]:
-    """Look up mapped Jira issue key for a given DevOps Agent taskId."""
+def get_task_item(task_id: str) -> Optional[Dict[str, Any]]:
+    """Look up full DynamoDB item for a given DevOps Agent taskId."""
     table = get_state_table()
     try:
         resp = table.get_item(Key={"taskId": task_id})
-        item = resp.get("Item")
-        if item:
-            return item.get("jiraIssueKey")
+        return resp.get("Item")
     except Exception as e:
         logger.warning(f"Error querying DynamoDB for taskId {task_id}: {e}")
     return None
 
 
+def get_mapped_issue_key(task_id: str) -> Optional[str]:
+    """Look up mapped Jira issue key for a given DevOps Agent taskId."""
+    item = get_task_item(task_id)
+    return item.get("jiraIssueKey") if item else None
+
+
 def save_mapping(task_id: str, issue_key: str, agent_space_id: str, execution_id: str, status: str, summary: str):
-    """Save taskId <-> Jira issueKey relationship to DynamoDB."""
+    """Save taskId <-> Jira issueKey relationship to DynamoDB with conditional write safety."""
     table = get_state_table()
     now_iso = datetime.now(timezone.utc).isoformat()
     try:
@@ -153,6 +157,12 @@ def handle_investigation_created(event: Dict[str, Any], jira: JiraClient):
     task_id = metadata.get("task_id") or metadata.get("taskId") or "UNKNOWN_TASK"
     agent_space_id = metadata.get("agent_space_id") or metadata.get("agentSpaceId") or "UNKNOWN_SPACE"
     execution_id = metadata.get("execution_id") or metadata.get("executionId") or "UNKNOWN_EXECUTION"
+
+    # Idempotency Guard: Prevent duplicate Jira issue creation if event is retried
+    existing_key = get_mapped_issue_key(task_id)
+    if existing_key:
+        logger.info(f"Idempotency Guard: Task '{task_id}' is already mapped to Jira issue '{existing_key}'. Skipping duplicate creation.")
+        return
 
     # Extract human-readable symptom/title
     symptom = (
@@ -262,9 +272,19 @@ def handle_investigation_completed(event: Dict[str, Any], jira: JiraClient):
         logger.warning("No taskId found in Completed event")
         return
 
-    issue_key = get_mapped_issue_key(task_id)
+    task_item = get_task_item(task_id)
+    if not task_item:
+        logger.warning(f"No DynamoDB record found for completed task {task_id}.")
+        return
+
+    issue_key = task_item.get("jiraIssueKey")
     if not issue_key:
-        logger.warning(f"No Jira issue found for completed task {task_id}.")
+        logger.warning(f"No Jira issue mapped for completed task {task_id}.")
+        return
+
+    # Idempotency Guard: Avoid duplicate RCA comments if EventBridge re-delivers Completed event
+    if task_item.get("status") == "COMPLETED":
+        logger.info(f"Idempotency Guard: Task '{task_id}' has already been processed as COMPLETED on '{issue_key}'. Skipping duplicate comment.")
         return
 
     # Attempt to extract findings from event payload or default synthesis
@@ -331,8 +351,17 @@ def handle_investigation_failed(event: Dict[str, Any], jira: JiraClient):
     if not task_id:
         return
 
-    issue_key = get_mapped_issue_key(task_id)
+    task_item = get_task_item(task_id)
+    if not task_item:
+        return
+
+    issue_key = task_item.get("jiraIssueKey")
     if not issue_key:
+        return
+
+    # Idempotency Guard: Avoid duplicate failure notifications if event is re-delivered
+    if task_item.get("status") == "FAILED":
+        logger.info(f"Idempotency Guard: Task '{task_id}' has already been processed as FAILED on '{issue_key}'. Skipping duplicate comment.")
         return
 
     console_link = build_console_url(agent_space_id, task_id, region)
