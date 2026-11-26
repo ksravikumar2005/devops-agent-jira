@@ -83,6 +83,37 @@ sequenceDiagram
 
 ---
 
+## 📋 Minimum Requirements
+
+Before deploying this integration, ensure your environment meets the following baseline requirements:
+
+### 1. AWS Account & Services
+| Requirement | Minimum Specification | Details |
+| :--- | :--- | :--- |
+| **AWS Account** | Standard / Organizations Member | Access to the AWS Management Console and CloudShell. |
+| **Target Region** | `us-east-1` (or supported region) | Region where your AWS DevOps Agent Space is active. |
+| **AWS DevOps Agent** | Active Agent Space | Configured Agent Space (`aspc-xxxx`) in your target AWS account. |
+| **IAM Permissions** | Administrator or Custom Policy | Deployment requires permissions to provision:<br>• `cloudformation:*`<br>• `lambda:*` (including Function URLs)<br>• `dynamodb:*`<br>• `events:*` (EventBridge Rules & Bus PutEvents)<br>• `secretsmanager:*`<br>• `iam:CreateRole`, `iam:PutRolePolicy`, `iam:PassRole` |
+| **Shell Environment** | **AWS CloudShell** *(Recommended)* | Native CloudShell comes pre-configured with AWS CLI v2, `jq`, `zip`, Python 3, and authenticated session credentials. |
+
+### 2. Atlassian Jira Cloud
+| Requirement | Minimum Specification | Details |
+| :--- | :--- | :--- |
+| **Jira Edition** | Jira Cloud (Standard, Premium, Enterprise) | Jira Cloud site (e.g., `https://<organization>.atlassian.net`). *Note: Jira Server/Data Center requires self-hosted endpoint access.* |
+| **User Role** | Site Administrator or Project Admin | Account must have permission to create issues, add comments, update labels, and create webhooks in the target project. |
+| **Authentication** | Atlassian API Token | Generated at [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens). |
+| **Target Project** | 1 Active Project | Project Key (e.g. `OPS`, `INC`, `PROD`, `DEVOPS`) with issue type `Incident`, `Bug`, or `Task`. |
+
+### 3. Local Machine Tooling *(Only needed if NOT using AWS CloudShell)*
+If deploying from your local workstation instead of AWS CloudShell:
+- **OS**: Linux, macOS, or Windows with WSL / Git Bash.
+- **AWS CLI**: v2.15.0 or higher, authenticated via `aws configure` or AWS IAM Identity Center (SSO).
+- **Utilities**: `bash` (4.x+), `curl`, `jq` (1.6+), `zip`.
+- **Python**: Python 3.10+ (if running synthetic simulation scripts locally).
+- **Node.js & npm** *(Optional)*: Node.js 18+ and `aws-cdk` (only required if deploying via the TypeScript CDK stack).
+
+---
+
 ## 🛠️ Step-by-Step Installation
 
 ### Prerequisites
