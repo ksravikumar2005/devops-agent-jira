@@ -144,8 +144,18 @@ aws logs tail "/aws/lambda/devops-agent-jira-integration-EventHandler" --follow
 
 ## 7. Teardown & Clean Up
 
-To delete all created resources:
+To delete all created resources (CloudFormation stack, Secrets Manager secret, DynamoDB table):
 
+### Via Setup Script:
+```bash
+# Interactive confirmation
+bash cloudshell-setup.sh --cleanup
+
+# Automated (skip confirmation prompt)
+bash cloudshell-setup.sh --cleanup --force
+```
+
+### Via Cleanup Script:
 ```bash
 bash scripts/cleanup.sh
 ```

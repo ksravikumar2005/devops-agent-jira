@@ -25,6 +25,99 @@ SECRET_NAME="devops-agent/jira-credentials"
 TABLE_NAME="devops-agent-jira-mappings"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source local .env if present
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/.env"
+fi
+
+# Parse CLI arguments
+DO_CLEANUP=false
+NON_INTERACTIVE="${NON_INTERACTIVE:-false}"
+FORCE_YES=false
+
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --cleanup|-c)
+            DO_CLEANUP=true
+            shift
+            ;;
+        --non-interactive|-y|--yes)
+            NON_INTERACTIVE=true
+            FORCE_YES=true
+            shift
+            ;;
+        --force|-f)
+            FORCE_YES=true
+            shift
+            ;;
+        --help|-h)
+            echo -e "${BOLD}Usage:${NC} $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -c, --cleanup            Teardown and delete all AWS integration resources"
+            echo "  -y, --non-interactive    Run without prompts using environment variables"
+            echo "  -f, --force              Skip confirmation prompts during cleanup"
+            echo "  -h, --help               Show this help message and exit"
+            echo ""
+            echo "Supported Environment Variables:"
+            echo "  AWS_REGION              Target AWS Region (e.g. us-east-1)"
+            echo "  AGENT_SPACE_ID          AWS DevOps Agent Space ID"
+            echo "  JIRA_URL                Atlassian Jira Cloud base URL (https://<org>.atlassian.net)"
+            echo "  JIRA_EMAIL              Atlassian Admin / User Email"
+            echo "  JIRA_TOKEN              Atlassian API Token"
+            echo "  JIRA_PROJECT            Jira Project Key (e.g. KAN, OPS)"
+            echo "  JIRA_ISSUE_TYPE         Jira Issue Type (e.g. Task, Incident, Bug)"
+            echo "  RUN_TEST                Run verification test (true/false, default: true)"
+            echo "  NON_INTERACTIVE         Enable headless mode (true/false, default: false)"
+            exit 0
+            ;;
+        *)
+            echo -e "${YELLOW}Unknown option: $1${NC} (Use --help for usage)"
+            shift
+            ;;
+    esac
+done
+
+# Cleanup Function
+run_cleanup() {
+    TARGET_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo 'us-east-1')}}"
+    echo -e "\n${YELLOW}=== [CLEANUP] Deleting AWS DevOps Agent Jira Integration Resources ===${NC}"
+    echo -e "  Region:                 ${BOLD}${TARGET_REGION}${NC}"
+    echo -e "  CloudFormation Stack:   ${BOLD}${STACK_NAME}${NC}"
+    echo -e "  Secrets Manager Secret: ${BOLD}${SECRET_NAME}${NC}"
+    echo -e "  DynamoDB State Table:   ${BOLD}${TABLE_NAME}${NC}\n"
+
+    if [ "$FORCE_YES" != true ]; then
+        read -rp "Are you sure you want to permanently delete these resources? [y/N]: " CONFIRM_CLEAN
+        if [[ ! "$CONFIRM_CLEAN" =~ ^[Yy] ]]; then
+            echo -e "${CYAN}Cleanup cancelled.${NC}"
+            exit 0
+        fi
+    fi
+
+    echo -e "  [1/3] Deleting CloudFormation Stack: ${STACK_NAME}..."
+    aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$TARGET_REGION"
+    echo -e "  Waiting for stack deletion to complete..."
+    aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" --region "$TARGET_REGION" 2>/dev/null || true
+    echo -e "  ${GREEN}✓ CloudFormation stack removed.${NC}"
+
+    echo -e "  [2/3] Deleting Secrets Manager Secret: ${SECRET_NAME}..."
+    aws secretsmanager delete-secret --secret-id "$SECRET_NAME" --force-delete-without-recovery --region "$TARGET_REGION" 2>/dev/null || true
+    echo -e "  ${GREEN}✓ Secret removed.${NC}"
+
+    echo -e "  [3/3] Deleting DynamoDB Table: ${TABLE_NAME}..."
+    aws dynamodb delete-table --table-name "$TABLE_NAME" --region "$TARGET_REGION" 2>/dev/null || true
+    echo -e "  ${GREEN}✓ DynamoDB table removed.${NC}"
+
+    echo -e "\n${GREEN}✓ Cleanup complete! All integration resources have been deleted.${NC}\n"
+    exit 0
+}
+
+if [ "$DO_CLEANUP" = true ]; then
+    run_cleanup
+fi
+
 echo -e "${CYAN}"
 cat << "EOF"
   ___  _ _ _  ___             ___              _         _ _          
@@ -71,9 +164,14 @@ DETECTED_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 
 echo -e "  Authenticated AWS Account: ${GREEN}${CURRENT_ACCOUNT_ID}${NC}"
 echo -e "  Current AWS Region:        ${GREEN}${DETECTED_REGION}${NC}\n"
 
-# Prompt for Region confirmation
-read -rp "Enter target AWS Region [${DETECTED_REGION}]: " USER_REGION
-TARGET_REGION="${USER_REGION:-$DETECTED_REGION}"
+# Prompt for Region confirmation or use environment variable
+if [ "$NON_INTERACTIVE" = true ]; then
+    TARGET_REGION="${TARGET_REGION:-$DETECTED_REGION}"
+    echo -e "  Target AWS Region (non-interactive): ${BOLD}${TARGET_REGION}${NC}"
+else
+    read -rp "Enter target AWS Region [${DETECTED_REGION}]: " USER_REGION
+    TARGET_REGION="${USER_REGION:-$DETECTED_REGION}"
+fi
 export AWS_DEFAULT_REGION="$TARGET_REGION"
 export AWS_REGION="$TARGET_REGION"
 
@@ -87,43 +185,79 @@ if aws aidevops list-agent-spaces --region "$TARGET_REGION" &>/dev/null; then
     DISCOVERED_SPACE=$(echo "$SPACES_JSON" | jq -r '.agentSpaces[0].agentSpaceId // empty' 2>/dev/null || echo "")
 fi
 
-if [ -n "$DISCOVERED_SPACE" ]; then
-    echo -e "  Found active DevOps Agent Space: ${GREEN}${DISCOVERED_SPACE}${NC}"
-    read -rp "Use this Agent Space ID? [Y/n]: " CONFIRM_SPACE
-    if [[ "$CONFIRM_SPACE" =~ ^[Nn] ]]; then
-        read -rp "Enter your AWS DevOps Agent Space ID: " AGENT_SPACE_ID
-    else
-        AGENT_SPACE_ID="$DISCOVERED_SPACE"
-    fi
+if [ "$NON_INTERACTIVE" = true ]; then
+    AGENT_SPACE_ID="${AGENT_SPACE_ID:-${DISCOVERED_SPACE:-default}}"
+    echo -e "  Using DevOps Agent Space ID: ${BOLD}${AGENT_SPACE_ID}${NC}"
 else
-    echo -e "  ${YELLOW}No DevOps Agent Space auto-detected via CLI.${NC}"
-    read -rp "Enter your AWS DevOps Agent Space ID (or press Enter for 'default'): " INPUT_SPACE
-    AGENT_SPACE_ID="${INPUT_SPACE:-default}"
+    if [ -n "$DISCOVERED_SPACE" ]; then
+        echo -e "  Found active DevOps Agent Space: ${GREEN}${DISCOVERED_SPACE}${NC}"
+        read -rp "Use this Agent Space ID? [Y/n]: " CONFIRM_SPACE
+        if [[ "$CONFIRM_SPACE" =~ ^[Nn] ]]; then
+            read -rp "Enter your AWS DevOps Agent Space ID: " USER_INPUT_SPACE
+            AGENT_SPACE_ID="${USER_INPUT_SPACE:-$DISCOVERED_SPACE}"
+        else
+            AGENT_SPACE_ID="$DISCOVERED_SPACE"
+        fi
+    else
+        DEFAULT_SPACE="${AGENT_SPACE_ID:-default}"
+        echo -e "  ${YELLOW}No DevOps Agent Space auto-detected via CLI.${NC}"
+        read -rp "Enter your AWS DevOps Agent Space ID [${DEFAULT_SPACE}]: " INPUT_SPACE
+        AGENT_SPACE_ID="${INPUT_SPACE:-$DEFAULT_SPACE}"
+    fi
 fi
 
 # ------------------------------------------------------------------------------
 # 3. Jira Cloud Admin Credentials & Pre-Flight Validation
 # ------------------------------------------------------------------------------
 echo -e "\n${BLUE}==> [3/6] Configuring Atlassian Jira Cloud Connection...${NC}"
-echo -e "${YELLOW}Note: You will need a Jira Cloud API token from:${NC}"
-echo -e "👉 ${CYAN}https://id.atlassian.com/manage-profile/security/api-tokens${NC}\n"
+
+# Normalize environment variable names
+JIRA_URL="${JIRA_URL:-$JIRA_BASE_URL}"
+JIRA_EMAIL="${JIRA_EMAIL:-$JIRA_USER_EMAIL}"
+JIRA_TOKEN="${JIRA_TOKEN:-$JIRA_API_TOKEN}"
+JIRA_PROJECT="${JIRA_PROJECT:-${JIRA_PROJECT_KEY:-OPS}}"
+JIRA_ISSUE_TYPE="${JIRA_ISSUE_TYPE:-Incident}"
 
 JIRA_VALID=false
 while [ "$JIRA_VALID" = false ]; do
-    read -rp "Jira Base URL (e.g. https://myorg.atlassian.net): " JIRA_URL
-    JIRA_URL=$(echo "$JIRA_URL" | sed 's:/*$::') # Remove trailing slash
+    if [ "$NON_INTERACTIVE" = true ]; then
+        if [ -z "$JIRA_URL" ] || [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_TOKEN" ] || [ -z "$JIRA_PROJECT" ]; then
+            echo -e "${RED}[ERROR] Non-interactive mode requires JIRA_URL, JIRA_EMAIL, JIRA_TOKEN, and JIRA_PROJECT.${NC}"
+            echo -e "Missing variables:"
+            [ -z "$JIRA_URL" ] && echo "  - JIRA_URL (e.g. export JIRA_URL='https://org.atlassian.net')"
+            [ -z "$JIRA_EMAIL" ] && echo "  - JIRA_EMAIL (e.g. export JIRA_EMAIL='user@example.com')"
+            [ -z "$JIRA_TOKEN" ] && echo "  - JIRA_TOKEN (e.g. export JIRA_TOKEN='...')"
+            [ -z "$JIRA_PROJECT" ] && echo "  - JIRA_PROJECT (e.g. export JIRA_PROJECT='KAN')"
+            exit 1
+        fi
+        JIRA_URL=$(echo "$JIRA_URL" | sed 's:/*$::')
+    else
+        echo -e "${YELLOW}Note: You will need a Jira Cloud API token from:${NC}"
+        echo -e "👉 ${CYAN}https://id.atlassian.com/manage-profile/security/api-tokens${NC}\n"
 
-    read -rp "Jira Admin / User Email: " JIRA_EMAIL
+        DEFAULT_URL="${JIRA_URL:-https://myorg.atlassian.net}"
+        read -rp "Jira Base URL (e.g. https://myorg.atlassian.net) [${JIRA_URL}]: " INPUT_URL
+        JIRA_URL="${INPUT_URL:-$JIRA_URL}"
+        JIRA_URL=$(echo "$JIRA_URL" | sed 's:/*$::') # Remove trailing slash
 
-    # Prompt password securely
-    read -s -rp "Jira API Token: " JIRA_TOKEN
-    echo ""
+        read -rp "Jira Admin / User Email [${JIRA_EMAIL}]: " INPUT_EMAIL
+        JIRA_EMAIL="${INPUT_EMAIL:-$JIRA_EMAIL}"
 
-    read -rp "Jira Project Key (e.g. OPS, INC, DEVOPS) [OPS]: " INPUT_PROJECT
-    JIRA_PROJECT="${INPUT_PROJECT:-OPS}"
+        if [ -n "$JIRA_TOKEN" ]; then
+            read -s -rp "Jira API Token [Using environment variable, press Enter to keep]: " INPUT_TOKEN
+            echo ""
+            JIRA_TOKEN="${INPUT_TOKEN:-$JIRA_TOKEN}"
+        else
+            read -s -rp "Jira API Token: " JIRA_TOKEN
+            echo ""
+        fi
 
-    read -rp "Jira Issue Type (e.g. Incident, Bug, Task) [Incident]: " INPUT_ITYPE
-    JIRA_ISSUE_TYPE="${INPUT_ITYPE:-Incident}"
+        read -rp "Jira Project Key (e.g. OPS, INC, KAN) [${JIRA_PROJECT}]: " INPUT_PROJECT
+        JIRA_PROJECT="${INPUT_PROJECT:-$JIRA_PROJECT}"
+
+        read -rp "Jira Issue Type (e.g. Task, Incident, Bug) [${JIRA_ISSUE_TYPE}]: " INPUT_ITYPE
+        JIRA_ISSUE_TYPE="${INPUT_ITYPE:-$JIRA_ISSUE_TYPE}"
+    fi
 
     echo -e "\n  ${CYAN}Testing Jira Cloud API connection...${NC}"
     
@@ -156,14 +290,21 @@ while [ "$JIRA_VALID" = false ]; do
             JIRA_VALID=true
         else
             echo -e "  ${YELLOW}[WARNING] Connected to Jira, but Project '${JIRA_PROJECT}' could not be loaded.${NC}"
-            read -rp "Continue with project '${JIRA_PROJECT}' anyway? [y/N]: " FORCE_PROJ
-            if [[ "$FORCE_PROJ" =~ ^[Yy] ]]; then
+            if [ "$NON_INTERACTIVE" = true ]; then
                 JIRA_VALID=true
+            else
+                read -rp "Continue with project '${JIRA_PROJECT}' anyway? [y/N]: " FORCE_PROJ
+                if [[ "$FORCE_PROJ" =~ ^[Yy] ]]; then
+                    JIRA_VALID=true
+                fi
             fi
         fi
     else
         echo -e "  ${RED}[FAILED] Authentication failed with HTTP status ${HTTP_CODE}.${NC}"
         echo -e "  Response: ${HTTP_BODY}"
+        if [ "$NON_INTERACTIVE" = true ]; then
+            exit 1
+        fi
         read -rp "Would you like to re-enter your credentials? [Y/n]: " RETRY
         if [[ "$RETRY" =~ ^[Nn] ]]; then
             echo -e "${RED}Aborting setup.${NC}"
@@ -265,9 +406,16 @@ WEBHOOK_URL=$(aws cloudformation describe-stacks \
 # 6. Verification & End-to-End Synthetic Test
 # ------------------------------------------------------------------------------
 echo -e "\n${BLUE}==> [6/6] End-to-End Integration Verification${NC}"
-read -rp "Would you like to run an automated synthetic investigation test? [Y/n]: " RUN_TEST
+if [ "$NON_INTERACTIVE" = true ]; then
+    RUN_TEST="${RUN_TEST:-true}"
+    echo -e "  Non-interactive test execution: ${BOLD}${RUN_TEST}${NC}"
+else
+    DEFAULT_TEST_CHOICE="${RUN_TEST:-Y}"
+    read -rp "Would you like to run an automated synthetic investigation test? [${DEFAULT_TEST_CHOICE}/n]: " USER_RUN_TEST
+    RUN_TEST="${USER_RUN_TEST:-$DEFAULT_TEST_CHOICE}"
+fi
 
-if [[ ! "$RUN_TEST" =~ ^[Nn] ]]; then
+if [[ "$RUN_TEST" = true ]] || [[ "$RUN_TEST" =~ ^[Yy] ]]; then
     echo -e "\n  ${CYAN}Triggering simulated 'Investigation Created' event...${NC}"
     TEST_TASK_ID="tsk-test-$(date +%s)"
     TEST_EXEC_ID="ex-test-$(date +%s)"

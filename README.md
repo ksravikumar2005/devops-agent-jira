@@ -166,19 +166,17 @@ curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
 
 ---
 
-### Method A: Interactive AWS CloudShell (Recommended)
+### Method A: AWS CloudShell Deployment
 
+#### Option 1: Interactive Wizard (Default)
 1. Open AWS CloudShell in your browser.
-2. Clone this repository:
+2. Clone this repository and run the setup wizard:
    ```bash
    git clone https://github.com/ksravikumar2005/devops-agent-jira.git
    cd devops-agent-jira
-   ```
-3. Run the interactive installer:
-   ```bash
    bash cloudshell-setup.sh
    ```
-4. Follow the interactive prompts:
+3. Follow the interactive prompts:
    - Confirm your target AWS Region.
    - Choose or enter your AWS DevOps Agent Space ID.
      > [!TIP]
@@ -196,8 +194,53 @@ curl -s -i -u "YOUR_EMAIL:YOUR_API_TOKEN" \
      > </p>
      >
      > *(Note: Accidental trailing slashes like `https://mycompany.atlassian.net/` are automatically sanitized and stripped by the setup script and Lambda integration to prevent double-slash API path errors).*
-   - Specify your Jira Project Key (`OPS` or `KAN`) and Issue Type (`Incident` or `Task`).
+   - Specify your Jira Project Key (`OPS` or `KAN`) and Issue Type (`Task`, `Bug`, or `Incident`). The script automatically detects valid issue types for your project.
    - Allow the script to run the live pre-flight check and synthetic test.
+
+#### Option 2: Environment Variables / Headless Mode (Zero Prompts)
+You can export environment variables in CloudShell to run a completely automated setup without any interactive prompts:
+
+```bash
+# 1. Export configuration variables
+export AWS_REGION="us-east-1"
+export AGENT_SPACE_ID="3f1e5f09-659d-4073-a7a5-2b5ca9e633bd"
+export JIRA_URL="https://aws-devops-agent.atlassian.net"
+export JIRA_EMAIL="ksravikumar2005@gmail.com"
+export JIRA_TOKEN="your_atlassian_api_token"
+export JIRA_PROJECT="KAN"
+export JIRA_ISSUE_TYPE="Task"
+export RUN_TEST=true
+
+# 2. Run automated setup
+bash cloudshell-setup.sh --non-interactive
+```
+
+---
+
+## 🧹 Teardown & Cleanup Options
+
+When you need to remove the integration and delete all provisioned AWS resources:
+
+### Option 1: Via the Setup Script
+```bash
+# Interactive cleanup (prompts for confirmation)
+bash cloudshell-setup.sh --cleanup
+
+# Automated non-interactive cleanup (skips confirmation prompt)
+bash cloudshell-setup.sh --cleanup --force
+```
+
+### Option 2: Using the Dedicated Cleanup Script
+```bash
+bash scripts/cleanup.sh
+```
+
+### Resources Cleaned Up:
+- **CloudFormation Stack**: Deletes `devops-agent-jira-integration` (Lambda functions, EventBridge rule, IAM roles, log groups).
+- **AWS Secrets Manager**: Permanently removes `devops-agent/jira-credentials` without recovery delay.
+- **Amazon DynamoDB**: Drops the state tracking table `devops-agent-jira-mappings`.
+
+---
 
 ---
 
